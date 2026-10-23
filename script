@@ -1,9 +1,8 @@
 --[[
-    MURDER GAME SUITE v4 — Unified PC / Mobile / Console / Hybrid
-    • Single code path — ไม่มี if-platform early-return
-    • Input รับ keyboard + mouse + touch + gamepad พร้อมกัน
-    • HUD toggle ได้ทุก device
-    • Rayfield auto-scale
+    MURDER GAME SUITE v5 — Gesture-only (no HUD buttons)
+    Mobile: 2-finger hold = Aim | 3-finger tap = Fire | 4-finger = ESP | 5-finger = Aimbot
+    PC:     RMB / E = Aim | F = Fire | RightShift = ESP toggle
+    Hybrid: ทั้งหมดทำงานพร้อมกัน
 ]]
 
 if _G._MurderSuite and _G._MurderSuite.cleanup then
@@ -17,15 +16,13 @@ local RunService        = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local Workspace         = game:GetService("Workspace")
 local UIS               = game:GetService("UserInputService")
-local GuiService        = game:GetService("GuiService")
 local RS                = game:GetService("ReplicatedStorage")
 
 local LP        = Players.LocalPlayer
 local Camera    = Workspace.CurrentCamera
 local PlayerGui = LP:WaitForChild("PlayerGui")
 
--- ═══════════════ DEVICE CAPABILITIES ═══════════════
--- ใช้ "capability" ไม่ใช่ "type" → รองรับ hybrid device
+-- ═══════════════ DEVICE CAPS ═══════════════
 local Caps = {
     touch    = UIS.TouchEnabled,
     keyboard = UIS.KeyboardEnabled,
@@ -33,8 +30,7 @@ local Caps = {
     mouse    = UIS.MouseEnabled,
 }
 Caps.primary = (Caps.touch and not Caps.keyboard) and "mobile"
-    or (Caps.gamepad and not Caps.touch) and "console"
-    or "pc"
+    or (Caps.gamepad and not Caps.touch) and "console" or "pc"
 
 -- ═══════════════ LOAD RAYFIELD ═══════════════
 local Rayfield
@@ -50,7 +46,6 @@ task.wait(0.3)
 
 -- ═══════════════ CONFIG ═══════════════
 local Config = {
-    -- Preset: "auto" | "pc" | "mobile" | "console"
     Preset = "auto",
 
     -- ESP
@@ -97,59 +92,58 @@ local Config = {
     AIM_FOVColor      = Color3.fromRGB(255, 100, 100),
     AIM_TargetColor   = Color3.fromRGB(255, 50, 50),
 
-    -- Input (ใช้ได้ทุก device พร้อมกัน)
+    -- PC / Console input
     IN_KbAimKey       = Enum.KeyCode.E,
     IN_UseRMB         = true,
-    IN_UseL2          = true,       -- gamepad aim
+    IN_UseL2          = true,
     IN_EspToggleKey   = Enum.KeyCode.RightShift,
-    IN_FireKey        = Enum.KeyCode.F,   -- PC fire (สำรอง)
-    IN_UseR2          = true,       -- gamepad fire
+    IN_FireKey        = Enum.KeyCode.F,
+    IN_UseR2          = true,
 
-    -- HUD (แสดงได้ทุก device)
-    HUD_Enabled       = Caps.touch,       -- default: เปิดบนมือถือ, ปิด PC
-    HUD_ShowAim       = true,
-    HUD_ShowFire      = true,
-    HUD_ShowESP       = true,
-    HUD_ShowStatus    = true,
-    HUD_ShowMenu      = true,
-    HUD_BtnSize       = 56,
-    HUD_AimSize       = 90,
-    HUD_Opacity       = 0.15,
-    HUD_LockPositions = false,            -- true = ลากไม่ได้
+    -- Mobile gestures
+    MOB_GestureEnabled = true,     -- 2-finger hold = aim
+    MOB_AutoAim        = true,     -- aim อัตโนมัติเมื่อถือปืน (ไม่ต้อง gesture)
+    MOB_AutoFire       = true,     -- ยิงอัตโนมัติเมื่อ lock (ใช้ AIM_AutoFire)
+    MOB_GestureWindow  = 0.15,     -- วินาที: นิ้วต้องมาแตะภายในหน้าต่างนี้
+    MOB_ControlZoneW   = 0.35,     -- ซ้าย/ขวา % ที่ไม่นับเป็น gesture zone
+    MOB_ControlZoneH   = 0.45,     -- ล่าง % ที่ไม่นับ
+    MOB_Debug          = false,    -- พิมพ์ gesture log
 }
 
 -- ═══════════════ APPLY PRESET ═══════════════
 local function applyPreset(preset)
     if preset == "auto" then preset = Caps.primary end
     if preset == "mobile" then
-        Config.ESP_TextSize   = 16
-        Config.ESP_MaxDist    = 500
-        Config.ESP_Interval   = 1/20
-        Config.AIM_FOV        = 250
-        Config.AIM_Smoothing  = 0.15
-        Config.AIM_AutoFire   = true
-        Config.IN_UseRMB      = false
-        Config.IN_UseL2       = false
-        Config.HUD_Enabled    = true
-        Config.HUD_AimSize    = 100
+        Config.ESP_TextSize      = 16
+        Config.ESP_MaxDist       = 500
+        Config.ESP_Interval      = 1/20
+        Config.AIM_FOV           = 260
+        Config.AIM_Smoothing     = 0.12
+        Config.AIM_AutoFire      = true
+        Config.IN_UseRMB         = false
+        Config.IN_UseL2          = false
+        Config.MOB_GestureEnabled = true
+        Config.MOB_AutoAim       = true
     elseif preset == "console" then
-        Config.ESP_TextSize   = 16
-        Config.ESP_Interval   = 1/25
-        Config.AIM_FOV        = 220
-        Config.AIM_Smoothing  = 0.25
-        Config.AIM_AutoFire   = false
-        Config.IN_UseRMB      = false
-        Config.IN_UseL2       = true
-        Config.HUD_Enabled    = false
-    else -- pc
-        Config.ESP_TextSize   = 14
-        Config.ESP_MaxDist    = 900
-        Config.ESP_Interval   = 1/30
-        Config.AIM_FOV        = 180
-        Config.AIM_Smoothing  = 0.35
-        Config.AIM_AutoFire   = false
-        Config.IN_UseRMB      = true
-        Config.HUD_Enabled    = false
+        Config.ESP_TextSize      = 16
+        Config.ESP_Interval      = 1/25
+        Config.AIM_FOV           = 220
+        Config.AIM_Smoothing     = 0.25
+        Config.AIM_AutoFire      = false
+        Config.IN_UseRMB         = false
+        Config.IN_UseL2          = true
+        Config.MOB_GestureEnabled = false
+        Config.MOB_AutoAim       = false
+    else
+        Config.ESP_TextSize      = 14
+        Config.ESP_MaxDist       = 900
+        Config.ESP_Interval      = 1/30
+        Config.AIM_FOV           = 180
+        Config.AIM_Smoothing     = 0.35
+        Config.AIM_AutoFire      = false
+        Config.IN_UseRMB         = true
+        Config.MOB_GestureEnabled = false
+        Config.MOB_AutoAim       = false
     end
 end
 applyPreset(Config.Preset)
@@ -242,20 +236,16 @@ do
         f.AnchorPoint = Vector2.new(0.5, 0.5)
         f.BackgroundColor3 = color
         f.BackgroundTransparency = 0.35
-        f.BorderSizePixel = 0
-        f.Visible = false
-        f.ZIndex = 100
+        f.BorderSizePixel = 0; f.Visible = false; f.ZIndex = 100
         f.Parent = gui
         Instance.new("UICorner", f).CornerRadius = UDim.new(1, 0)
         local s = Instance.new("UIStroke", f)
         s.Color = Color3.new(1, 1, 1); s.Thickness = 2
         local a = Instance.new("TextLabel", f)
-        a.BackgroundTransparency = 1
-        a.Size = UDim2.new(1, 0, 1, 0)
+        a.BackgroundTransparency = 1; a.Size = UDim2.new(1, 0, 1, 0)
         a.Text = "▲"; a.TextColor3 = Color3.new(1, 1, 1); a.TextSize = 18
         a.Font = Enum.Font.GothamBold
-        i = { frame = f, arrow = a }
-        indic[model] = i
+        i = { frame = f, arrow = a }; indic[model] = i
         return i
     end
 
@@ -425,14 +415,12 @@ do
     local genId, pointId = nil, nil
     local isScourge, remaining = false, 0
 
-    local hooked = false
     if hookfunction and newcclosure then
         local old = ResultEvent.FireServer
         hookfunction(old, newcclosure(function(self, action, ...)
             if blockedFail and action == "fail" then return end
             return old(self, action, ...)
         end))
-        hooked = true
     elseif getrawmetatable and setreadonly and newcclosure then
         local mt = getrawmetatable(game)
         local oldNC = mt.__namecall
@@ -443,9 +431,8 @@ do
             end
             return oldNC(self, ...)
         end)
-        setreadonly(mt, true); hooked = true
+        setreadonly(mt, true)
     end
-    if Config.AR_Debug then print("[AR] Fail-hook:", hooked) end
 
     local function norm(d) return d % 360 end
     local function inSuccess()
@@ -523,9 +510,8 @@ end
 -- ═══════════════ AIMBOT CORE ═══════════════
 local Aim = {}
 do
-    local aimHeld      = false
-    local lastFire     = 0
-    local currentTarget = nil
+    local aimHeld = false
+    local lastFire = 0
 
     local gui = Instance.new("ScreenGui")
     gui.Name = "MurderAim"
@@ -545,7 +531,6 @@ do
     Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
     local fovStroke = Instance.new("UIStroke", fovFrame)
     fovStroke.Thickness = 1.5; fovStroke.Transparency = 0.4
-    Aim.FovFrame = fovFrame
 
     local tBox = Instance.new("Frame")
     tBox.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -556,7 +541,6 @@ do
     Instance.new("UICorner", tBox).CornerRadius = UDim.new(0, 4)
     local tStroke = Instance.new("UIStroke", tBox)
     tStroke.Thickness = 2; tStroke.Transparency = 0.1
-    Aim.TargetBox = tBox
 
     local line = Instance.new("Frame")
     line.AnchorPoint = Vector2.new(0, 0.5)
@@ -566,7 +550,6 @@ do
     line.Size = UDim2.new(0, 0, 0, 2)
     line.Visible = false
     line.Parent = gui
-    Aim.Line = line
 
     local function getKiller()
         for _, plr in Players:GetPlayers() do
@@ -603,8 +586,7 @@ do
     end
 
     local function aimAt(targetPos)
-        local camPos = Camera.CFrame.Position
-        local targetCF = CFrame.lookAt(camPos, targetPos)
+        local targetCF = CFrame.lookAt(Camera.CFrame.Position, targetPos)
         local s = Config.AIM_Smoothing
         if s <= 0.001 or s >= 0.999 then
             Camera.CFrame = targetCF
@@ -639,10 +621,17 @@ do
 
         tBox.Visible = false
         line.Visible = false
-        currentTarget = nil
 
         if not Config.AIM_Enabled then return end
-        if Config.AIM_RequireAim and not aimHeld then return end
+
+        -- Determine if aim is "active"
+        local aiming = aimHeld
+        -- Mobile auto-aim: lock on automatically when holding gun
+        if Caps.touch and Config.MOB_AutoAim and hasGun() then
+            aiming = true
+        end
+
+        if Config.AIM_RequireAim and not aiming then return end
 
         local plr, char = getKiller()
         if not plr then return end
@@ -654,7 +643,6 @@ do
         if wallBlocked(part.Position, char) then return end
 
         aimAt(part.Position)
-        currentTarget = plr
 
         if Config.AIM_ShowTarget and sp then
             tBox.Visible = true
@@ -685,8 +673,6 @@ do
         end
     end
 
-    function Aim.GetTarget() return currentTarget end
-
     function Aim.Fire()
         if not LP.Character then return end
         local tool = LP.Character:FindFirstChildOfClass("Tool")
@@ -700,241 +686,142 @@ RunService:BindToRenderStep("MurderAimLock", Enum.RenderPriority.Camera.Value + 
     Aim.Step()
 end)
 
--- ═══════════════ UNIFIED HUD ═══════════════
--- HUD ทำงานได้ทุก device — toggle ได้, ลากได้ (mouse + touch)
-local HUD = {}
+-- ═══════════════ MOBILE GESTURES ═══════════════
+-- ไม่มีปุ่มบนจอ — ใช้ multi-finger gesture
+local Gesture = {}
 do
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "MurderHUD"
-    gui.ResetOnSpawn = false
-    gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 1000
-    gui.Enabled = Config.HUD_Enabled
-    gui.Parent = PlayerGui
-    HUD.Gui = gui
+    local fingers = {}        -- [input] = { t = tick(), gesture = bool }
+    local aimActive = false
+    local lastFireGesture = 0
+    local lastEspGesture = 0
+    local lastAimToggleGesture = 0
+    local FIRE_COOLDOWN = 0.5
+    local ESP_COOLDOWN = 0.5
+    local AIM_TOGGLE_COOLDOWN = 0.5
 
-    local topInset  = GuiService:GetGuiInset().Y
-    local FONT = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
-    local SP = 12
-
-    local function styleBtn(btn, color, strokeColor)
-        btn.BorderSizePixel = 0
-        btn.AutoButtonColor = false
-        btn.BackgroundColor3 = color
-        btn.BackgroundTransparency = Config.HUD_Opacity
-        btn.FontFace = FONT
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-        local s = Instance.new("UIStroke", btn)
-        s.Color = strokeColor; s.Thickness = 2
-        return s
-    end
-
-    local function makeDraggable(btn)
-        local dragging, dragStart, startPos
-        btn.InputBegan:Connect(function(input)
-            if Config.HUD_LockPositions then return end
-            if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = true
-                dragStart = input.Position
-                startPos = btn.Position
-            end
-        end)
-        UIS.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseMovement) then
-                local d = input.Position - dragStart
-                btn.Position = UDim2.fromOffset(startPos.X.Offset + d.X, startPos.Y.Offset + d.Y)
-            end
-        end)
-        UIS.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = false
-            end
-        end)
-    end
-
-    -- HUD button factory (งานทั้ง PC + mobile)
-    local function makeButton(name, text, size, anchor, pos, color, strokeColor, onClick, onHold)
-        local btn = Instance.new("TextButton")
-        btn.Name = name
-        btn.Size = UDim2.fromOffset(size, size)
-        btn.AnchorPoint = anchor
-        btn.Position = pos
-        btn.Text = text
-        btn.TextSize = math.floor(size * 0.45)
-        local stroke = styleBtn(btn, color, strokeColor)
-        btn.Parent = gui
-
-        if onHold then
-            local touchId = nil
-            btn.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.Touch
-                or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    touchId = input
-                    onHold(true)
-                    btn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-                    stroke.Color = Color3.fromRGB(200, 255, 200)
-                end
-            end)
-            btn.InputEnded:Connect(function(input)
-                if (input.UserInputType == Enum.UserInputType.Touch
-                or input.UserInputType == Enum.UserInputType.MouseButton1)
-                and input == touchId then
-                    touchId = nil
-                    onHold(false)
-                    btn.BackgroundColor3 = color
-                    stroke.Color = strokeColor
-                end
-            end)
-        elseif onClick then
-            btn.MouseButton1Click:Connect(onClick)
+    local function log(...)
+        if Config.MOB_Debug then
+            print("[Gesture]", ...)
         end
-        return btn, stroke
     end
 
-    -- MENU
-    local menuBtn
-    if Config.HUD_ShowMenu then
-        menuBtn = makeButton(
-            "MenuBtn", "☰", Config.HUD_BtnSize,
-            Vector2.new(0, 0), UDim2.fromOffset(SP, topInset + 8),
-            Color3.fromRGB(120, 60, 200), Color3.fromRGB(200, 140, 255),
-            function() pcall(function() Rayfield:Toggle() end) end
-        )
-        makeDraggable(menuBtn)
+    -- ตรวจว่าจุดนั้นอยู่นอกโซนควบคุมของเกมไหม
+    -- (โซนซ้ายล่าง = joystick, โซนขวาล่าง = action buttons)
+    local function inGestureZone(pos)
+        local vp = Camera.ViewportSize
+        local cw = vp.X * Config.MOB_ControlZoneW
+        local ch = vp.Y * Config.MOB_ControlZoneH
+        -- โซนซ้ายล่าง
+        if pos.X < cw and pos.Y > vp.Y - ch then return false end
+        -- โซนขวาล่าง
+        if pos.X > vp.X - cw and pos.Y > vp.Y - ch then return false end
+        return true
     end
 
-    -- ESP TOGGLE
-    local espBtn, espStroke
-    if Config.HUD_ShowESP then
-        espBtn, espStroke = makeButton(
-            "ESPBtn", "👁", Config.HUD_BtnSize,
-            Vector2.new(1, 0), UDim2.new(1, -SP, 0, topInset + 8),
-            Color3.fromRGB(60, 140, 220), Color3.fromRGB(150, 200, 255),
-            function()
+    local function countActive()
+        local n = 0
+        for _ in pairs(fingers) do n = n + 1 end
+        return n
+    end
+
+    local function countRecentGesture()
+        local now = tick()
+        local n = 0
+        for _, info in pairs(fingers) do
+            if info.gesture and now - info.t <= Config.MOB_GestureWindow then
+                n = n + 1
+            end
+        end
+        return n
+    end
+
+    local function countActiveGesture()
+        local n = 0
+        for _, info in pairs(fingers) do
+            if info.gesture then n = n + 1 end
+        end
+        return n
+    end
+
+    if not Caps.touch then
+        -- ไม่มี touch → gesture system ปิดตัวเงียบๆ
+        function Gesture.Init() end
+        function Gesture.Destroy() end
+        return
+    end
+
+    local conns = {}
+
+    table.insert(conns, UIS.TouchStarted:Connect(function(input)
+        local pos = Vector3.new(input.Position.X, input.Position.Y, 0)
+        local eligible = inGestureZone(Vector2.new(input.Position.X, input.Position.Y))
+        fingers[input] = { t = tick(), gesture = eligible, pos = input.Position }
+
+        if not Config.MOB_GestureEnabled then return end
+
+        local recent = countRecentGesture()
+
+        if recent == 2 and not aimActive then
+            aimActive = true
+            Aim.SetHeld(true)
+            log("AIM START (2-finger hold)")
+        elseif recent == 3 then
+            if tick() - lastFireGesture >= FIRE_COOLDOWN then
+                lastFireGesture = tick()
+                if Config.AIM_Enabled then
+                    Aim.Fire()
+                    log("FIRE (3-finger tap)")
+                end
+            end
+        elseif recent == 4 then
+            if tick() - lastEspGesture >= ESP_COOLDOWN then
+                lastEspGesture = tick()
                 Config.ESP_Enabled = not Config.ESP_Enabled
                 if not Config.ESP_Enabled then ESP:ClearAll() end
+                log("ESP TOGGLE →", Config.ESP_Enabled)
                 if _G._MurderSuite and _G._MurderSuite.syncUI then
                     _G._MurderSuite.syncUI("ESP_Enabled", Config.ESP_Enabled)
                 end
             end
-        )
-        makeDraggable(espBtn)
-    end
-
-    -- AIM (hold)
-    local aimBtn, aimStroke
-    if Config.HUD_ShowAim then
-        aimBtn, aimStroke = makeButton(
-            "AimBtn", "🎯", Config.HUD_AimSize,
-            Vector2.new(1, 1), UDim2.new(1, -SP, 1, -12),
-            Color3.fromRGB(200, 40, 40), Color3.fromRGB(255, 150, 150),
-            nil,
-            function(state) Aim.SetHeld(state) end
-        )
-        aimStroke.Thickness = 3
-    end
-
-    -- FIRE (tap)
-    local fireBtn
-    if Config.HUD_ShowFire then
-        fireBtn = makeButton(
-            "FireBtn", "🔥", 70,
-            Vector2.new(1, 1),
-            UDim2.new(1, -SP, 1, -(12 + Config.HUD_AimSize + 20)),
-            Color3.fromRGB(255, 140, 20), Color3.fromRGB(255, 200, 100),
-            function() Aim.Fire() end
-        )
-        fireBtn.Visible = false
-    end
-
-    -- STATUS
-    local statusLbl
-    if Config.HUD_ShowStatus then
-        statusLbl = Instance.new("TextLabel")
-        statusLbl.Name = "StatusLbl"
-        statusLbl.Size = UDim2.fromOffset(150, 28)
-        statusLbl.AnchorPoint = Vector2.new(0.5, 0)
-        statusLbl.Position = UDim2.new(0.5, 0, 0, topInset + 8)
-        statusLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-        statusLbl.BackgroundTransparency = 0.3
-        statusLbl.BorderSizePixel = 0
-        statusLbl.FontFace = FONT
-        statusLbl.TextSize = 13
-        statusLbl.TextColor3 = Color3.fromRGB(100, 255, 100)
-        statusLbl.Text = "✓ Ready"
-        statusLbl.Parent = gui
-        Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(1, 0)
-    end
-
-    -- Update loop
-    task.spawn(function()
-        while gui.Parent do
-            task.wait(0.25)
-            -- ESP button state
-            if espBtn then
-                local on = Config.ESP_Enabled
-                espBtn.BackgroundColor3 = on and Color3.fromRGB(60, 140, 220) or Color3.fromRGB(80, 80, 80)
-                espStroke.Color = on and Color3.fromRGB(150, 200, 255) or Color3.fromRGB(120, 120, 120)
-            end
-            -- Fire button visibility
-            if fireBtn then
-                fireBtn.Visible = Config.AIM_Enabled
-                    and not Config.AIM_AutoFire
-                    and Aim.HasGun and Aim.HasGun()
-            end
-            -- Status
-            if statusLbl then
-                local parts = {}
-                if Config.AR_Enabled then table.insert(parts, "AR✓") end
-                if Config.AIM_Enabled then table.insert(parts, "Aim✓") end
-                if Config.ESP_Enabled then table.insert(parts, "ESP✓") end
-                statusLbl.Text = #parts > 0 and table.concat(parts, "  ") or "✗ Idle"
-                statusLbl.TextColor3 = #parts > 0
-                    and Color3.fromRGB(100, 255, 100)
-                    or Color3.fromRGB(255, 100, 100)
+        elseif recent == 5 then
+            if tick() - lastAimToggleGesture >= AIM_TOGGLE_COOLDOWN then
+                lastAimToggleGesture = tick()
+                Config.AIM_Enabled = not Config.AIM_Enabled
+                log("AIMBOT TOGGLE →", Config.AIM_Enabled)
+                if _G._MurderSuite and _G._MurderSuite.syncUI then
+                    _G._MurderSuite.syncUI("AIM_Enabled", Config.AIM_Enabled)
+                end
             end
         end
-    end)
+    end))
 
-    function HUD:SetEnabled(state)
-        Config.HUD_Enabled = state
-        gui.Enabled = state
-    end
-
-    function HUD:SetOpacity(v)
-        Config.HUD_Opacity = v
-        for _, btn in ipairs(gui:GetDescendants()) do
-            if btn:IsA("TextButton") then
-                btn.BackgroundTransparency = v
-            end
+    table.insert(conns, UIS.TouchEnded:Connect(function(input)
+        fingers[input] = nil
+        if aimActive and countActiveGesture() < 2 then
+            aimActive = false
+            Aim.SetHeld(false)
+            log("AIM END")
         end
+    end))
+
+    -- Safety: ถ้า touch หายหมด (เช่นสลับแอป) → reset
+    table.insert(conns, UIS.WindowFocusReleased:Connect(function()
+        fingers = {}
+        if aimActive then
+            aimActive = false
+            Aim.SetHeld(false)
+        end
+    end))
+
+    function Gesture.Destroy()
+        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
     end
-
-    function HUD:Destroy() if gui then gui:Destroy() end end
-
-    HUD.MenuBtn = menuBtn
-    HUD.ESPBtn = espBtn
-    HUD.AimBtn = aimBtn
-    HUD.FireBtn = fireBtn
-    HUD.StatusLbl = statusLbl
 end
 
--- ═══════════════ UNIFIED INPUT ═══════════════
--- รับทุก input type พร้อมกัน — ไม่แยก platform
+-- ═══════════════ PC / CONSOLE INPUT ═══════════════
 local inputConns = {}
 
--- AIM (hold): RMB / E / L2 / (HUD กดค้าง)
 local function isAimBegin(input)
-    if Config.IN_UseRMB and input.UserInputType == Enum.UserInputType.MouseButton2 then return true end
-    if input.KeyCode == Config.IN_KbAimKey then return true end
-    if Config.IN_UseL2 and input.KeyCode == Enum.KeyCode.ButtonL2 then return true end
-    return false
-end
-local function isAimEnd(input)
     if Config.IN_UseRMB and input.UserInputType == Enum.UserInputType.MouseButton2 then return true end
     if input.KeyCode == Config.IN_KbAimKey then return true end
     if Config.IN_UseL2 and input.KeyCode == Enum.KeyCode.ButtonL2 then return true end
@@ -946,10 +833,8 @@ table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
     if isAimBegin(input) then Aim.SetHeld(true) end
 end))
 table.insert(inputConns, UIS.InputEnded:Connect(function(input, gp)
-    if isAimEnd(input) then Aim.SetHeld(false) end
+    if isAimBegin(input) then Aim.SetHeld(false) end
 end))
-
--- ESP toggle: RightShift (PC) / HUD button (mobile)
 table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Config.IN_EspToggleKey then
@@ -960,8 +845,6 @@ table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
         end
     end
 end))
-
--- Fire (PC: F key / R2) — สำรองเมื่อไม่ใช้ Auto-fire
 table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Config.IN_FireKey
@@ -973,42 +856,28 @@ table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
 end))
 
 -- ═══════════════ RAYFIELD UI ═══════════════
--- Mobile: ลดขนาด + เปิด auto-scale ถ้ามี
-local RayfieldConfig = {
-    Name = "Murder Game Suite v4",
+local Window = Rayfield:CreateWindow({
+    Name = "Murder Game Suite v5",
     LoadingTitle = "Murder Game Suite",
-    LoadingSubtitle = "PC / Mobile / Console",
+    LoadingSubtitle = "Gesture Edition (no HUD buttons)",
     Theme = "Amethyst",
     KeySystem = false,
     ConfigurationSaving = { Enabled = false },
-}
--- ถ้า Rayfield v2+ รองรับ AutoScale
-if Caps.touch then
-    pcall(function()
-        RayfieldConfig.RayfieldScale = 0.85
-    end)
-end
+})
 
-local Window = Rayfield:CreateWindow(RayfieldConfig)
-
--- ═══════════════ RAYFIELD TABS ═══════════════
-local SyncUI = {}   -- [Flag] = { toggles... }
-
-local function regToggle(flag, toggleObj)
+local SyncUI = {}
+local function regToggle(flag, obj)
     SyncUI[flag] = SyncUI[flag] or {}
-    table.insert(SyncUI[flag], toggleObj)
+    table.insert(SyncUI[flag], obj)
 end
 
 -- ─── Auto Repair ───
 local TabAR = Window:CreateTab("Auto Repair", 4483362458)
-local arT
-arT = TabAR:CreateToggle({
-    Name = "Enable Auto Repair",
-    CurrentValue = Config.AR_Enabled, Flag = "AR_Enabled",
+local arT = TabAR:CreateToggle({
+    Name = "Enable Auto Repair", CurrentValue = Config.AR_Enabled, Flag = "AR_Enabled",
     Callback = function(s) Config.AR_Enabled = s; if not s then AR.Cancel() end end,
 })
 regToggle("AR_Enabled", arT)
-
 TabAR:CreateToggle({
     Name = "Prefer Center", CurrentValue = Config.AR_PreferCenter,
     Flag = "AR_PreferCenter",
@@ -1019,20 +888,14 @@ TabAR:CreateSlider({
     CurrentValue = Config.AR_CenterTol, Flag = "AR_CenterTol",
     Callback = function(v) Config.AR_CenterTol = v end,
 })
-TabAR:CreateToggle({
-    Name = "Debug Log", CurrentValue = Config.AR_Debug, Flag = "AR_Debug",
-    Callback = function(v) Config.AR_Debug = v end,
-})
 
 -- ─── ESP ───
 local TabESP = Window:CreateTab("ESP", 4483362458)
-local espT
-espT = TabESP:CreateToggle({
+local espT = TabESP:CreateToggle({
     Name = "Enable ESP", CurrentValue = Config.ESP_Enabled, Flag = "ESP_Enabled",
     Callback = function(s) Config.ESP_Enabled = s; if not s then ESP:ClearAll() end end,
 })
 regToggle("ESP_Enabled", espT)
-
 TabESP:CreateToggle({ Name = "Show Killer", CurrentValue = true, Flag = "ESP_ShowKiller", Callback = function(v) Config.ESP_ShowKiller = v end })
 TabESP:CreateToggle({ Name = "Show Survivors", CurrentValue = true, Flag = "ESP_ShowSurvivor", Callback = function(v) Config.ESP_ShowSurvivor = v end })
 TabESP:CreateToggle({ Name = "Show Generators", CurrentValue = true, Flag = "ESP_ShowGenerator", Callback = function(v) Config.ESP_ShowGenerator = v end })
@@ -1042,31 +905,25 @@ TabESP:CreateSlider({ Name = "Update FPS", Range = {10, 60}, Increment = 5, Suff
 
 -- ─── Aimbot ───
 local TabAim = Window:CreateTab("Aimbot", 4483362458)
-local aimT
-aimT = TabAim:CreateToggle({
+local aimT = TabAim:CreateToggle({
     Name = "Enable Aimbot", CurrentValue = Config.AIM_Enabled, Flag = "AIM_Enabled",
     Callback = function(s) Config.AIM_Enabled = s end,
 })
 regToggle("AIM_Enabled", aimT)
-
 TabAim:CreateToggle({
-    Name = "Require Hold (Aim key/button)",
-    CurrentValue = Config.AIM_RequireAim, Flag = "AIM_RequireAim",
+    Name = "Require Aim Input", CurrentValue = Config.AIM_RequireAim, Flag = "AIM_RequireAim",
     Callback = function(s) Config.AIM_RequireAim = s end,
 })
 TabAim:CreateToggle({
-    Name = "Use Right Mouse (PC)",
-    CurrentValue = Config.IN_UseRMB, Flag = "IN_UseRMB",
+    Name = "Use Right Mouse (PC)", CurrentValue = Config.IN_UseRMB, Flag = "IN_UseRMB",
     Callback = function(s) Config.IN_UseRMB = s end,
 })
 TabAim:CreateToggle({
-    Name = "Use L2 (Gamepad)",
-    CurrentValue = Config.IN_UseL2, Flag = "IN_UseL2",
+    Name = "Use L2 (Gamepad)", CurrentValue = Config.IN_UseL2, Flag = "IN_UseL2",
     Callback = function(s) Config.IN_UseL2 = s end,
 })
 TabAim:CreateKeybind({
-    Name = "Aim Key (Keyboard)",
-    CurrentValue = Config.IN_KbAimKey.Name, Flag = "IN_KbAimKey",
+    Name = "Aim Key (Keyboard)", CurrentValue = Config.IN_KbAimKey.Name, Flag = "IN_KbAimKey",
     Callback = function(k) local kc = Enum.KeyCode[k]; if kc then Config.IN_KbAimKey = kc end end,
 })
 TabAim:CreateDropdown({
@@ -1075,122 +932,62 @@ TabAim:CreateDropdown({
     CurrentOption = {Config.AIM_TargetPart}, Flag = "AIM_TargetPart",
     Callback = function(o) Config.AIM_TargetPart = o[1] or o end,
 })
-TabAim:CreateToggle({
-    Name = "Wall Check", CurrentValue = Config.AIM_WallCheck, Flag = "AIM_WallCheck",
-    Callback = function(v) Config.AIM_WallCheck = v end,
-})
-TabAim:CreateSlider({
-    Name = "FOV Radius", Range = {50, 500}, Increment = 10, Suffix = " px",
-    CurrentValue = Config.AIM_FOV, Flag = "AIM_FOV",
-    Callback = function(v) Config.AIM_FOV = v end,
-})
-TabAim:CreateSlider({
-    Name = "Smoothing", Range = {0, 0.95}, Increment = 0.05,
-    CurrentValue = Config.AIM_Smoothing, Flag = "AIM_Smoothing",
-    Callback = function(v) Config.AIM_Smoothing = v end,
-})
-TabAim:CreateToggle({
-    Name = "Auto Fire", CurrentValue = Config.AIM_AutoFire, Flag = "AIM_AutoFire",
-    Callback = function(v) Config.AIM_AutoFire = v end,
-})
-TabAim:CreateSlider({
-    Name = "Fire Cooldown", Range = {0.1, 3}, Increment = 0.1, Suffix = "s",
-    CurrentValue = Config.AIM_FireCooldown, Flag = "AIM_FireCooldown",
-    Callback = function(v) Config.AIM_FireCooldown = v end,
-})
-TabAim:CreateInput({
-    Name = "Gun Keywords (comma)", CurrentValue = Config.AIM_GunKeywords,
-    Flag = "AIM_GunKeywords",
-    PlaceholderText = "twist,fate,gun",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(v) Config.AIM_GunKeywords = v end,
-})
+TabAim:CreateSlider({ Name = "FOV Radius", Range = {50, 500}, Increment = 10, Suffix = " px", CurrentValue = Config.AIM_FOV, Flag = "AIM_FOV", Callback = function(v) Config.AIM_FOV = v end })
+TabAim:CreateSlider({ Name = "Smoothing", Range = {0, 0.95}, Increment = 0.05, CurrentValue = Config.AIM_Smoothing, Flag = "AIM_Smoothing", Callback = function(v) Config.AIM_Smoothing = v end })
+TabAim:CreateToggle({ Name = "Auto Fire", CurrentValue = Config.AIM_AutoFire, Flag = "AIM_AutoFire", Callback = function(v) Config.AIM_AutoFire = v end })
+TabAim:CreateSlider({ Name = "Fire Cooldown", Range = {0.1, 3}, Increment = 0.1, Suffix = "s", CurrentValue = Config.AIM_FireCooldown, Flag = "AIM_FireCooldown", Callback = function(v) Config.AIM_FireCooldown = v end })
 
--- ─── HUD (แสดงทุก device) ───
-local TabHUD = Window:CreateTab("HUD", 4483362458)
-TabHUD:CreateSection("Visibility")
-local hudT
-hudT = TabHUD:CreateToggle({
-    Name = "Show HUD (works on any device)",
-    CurrentValue = Config.HUD_Enabled, Flag = "HUD_Enabled",
-    Callback = function(s)
-        Config.HUD_Enabled = s
-        if HUD.SetEnabled then HUD:SetEnabled(s) end
-    end,
-})
-regToggle("HUD_Enabled", hudT)
+-- ─── Mobile Gestures (แสดงเฉพาะเมื่อมี touch) ───
+if Caps.touch then
+    local TabMob = Window:CreateTab("Mobile Gestures", 4483362458)
+    TabMob:CreateSection("Gesture Mode")
+    TabMob:CreateToggle({
+        Name = "Enable Gestures",
+        CurrentValue = Config.MOB_GestureEnabled, Flag = "MOB_GestureEnabled",
+        Callback = function(v)
+            Config.MOB_GestureEnabled = v
+            if not v then Aim.SetHeld(false) end
+        end,
+    })
+    TabMob:CreateToggle({
+        Name = "Auto-Aim (hold gun → lock on)",
+        CurrentValue = Config.MOB_AutoAim, Flag = "MOB_AutoAim",
+        Callback = function(v) Config.MOB_AutoAim = v end,
+    })
 
-TabHUD:CreateToggle({
-    Name = "Show Menu Button", CurrentValue = Config.HUD_ShowMenu, Flag = "HUD_ShowMenu",
-    Callback = function(v)
-        Config.HUD_ShowMenu = v
-        if HUD.MenuBtn then HUD.MenuBtn.Visible = v end
-    end,
-})
-TabHUD:CreateToggle({
-    Name = "Show ESP Button", CurrentValue = Config.HUD_ShowESP, Flag = "HUD_ShowESP",
-    Callback = function(v)
-        Config.HUD_ShowESP = v
-        if HUD.ESPBtn then HUD.ESPBtn.Visible = v end
-    end,
-})
-TabHUD:CreateToggle({
-    Name = "Show Aim Button", CurrentValue = Config.HUD_ShowAim, Flag = "HUD_ShowAim",
-    Callback = function(v)
-        Config.HUD_ShowAim = v
-        if HUD.AimBtn then HUD.AimBtn.Visible = v end
-    end,
-})
-TabHUD:CreateToggle({
-    Name = "Show Fire Button", CurrentValue = Config.HUD_ShowFire, Flag = "HUD_ShowFire",
-    Callback = function(v)
-        Config.HUD_ShowFire = v
-        if HUD.FireBtn and not v then HUD.FireBtn.Visible = false end
-    end,
-})
-TabHUD:CreateToggle({
-    Name = "Show Status Badge", CurrentValue = Config.HUD_ShowStatus, Flag = "HUD_ShowStatus",
-    Callback = function(v)
-        Config.HUD_ShowStatus = v
-        if HUD.StatusLbl then HUD.StatusLbl.Visible = v end
-    end,
-})
+    TabMob:CreateSection("Info")
+    TabMob:CreateParagraph({
+        Title = "How to use",
+        Content = "2-finger hold = Aim (center screen)\n3-finger tap = Fire\n4-finger tap = Toggle ESP\n5-finger tap = Toggle Aimbot\n\nFingers must be outside joystick/action zones (bottom corners).",
+    })
 
-TabHUD:CreateSection("Appearance")
-TabHUD:CreateSlider({
-    Name = "Button Size", Range = {40, 120}, Increment = 5, Suffix = "px",
-    CurrentValue = Config.HUD_BtnSize, Flag = "HUD_BtnSize",
-    Callback = function(v)
-        Config.HUD_BtnSize = v
-        if HUD.MenuBtn then HUD.MenuBtn.Size = UDim2.fromOffset(v, v) end
-        if HUD.ESPBtn then HUD.ESPBtn.Size = UDim2.fromOffset(v, v) end
-    end,
-})
-TabHUD:CreateSlider({
-    Name = "Aim Button Size", Range = {70, 160}, Increment = 5, Suffix = "px",
-    CurrentValue = Config.HUD_AimSize, Flag = "HUD_AimSize",
-    Callback = function(v)
-        Config.HUD_AimSize = v
-        if HUD.AimBtn then HUD.AimBtn.Size = UDim2.fromOffset(v, v) end
-    end,
-})
-TabHUD:CreateSlider({
-    Name = "Opacity", Range = {0, 0.6}, Increment = 0.05,
-    CurrentValue = Config.HUD_Opacity, Flag = "HUD_Opacity",
-    Callback = function(v)
-        Config.HUD_Opacity = v
-        if HUD.SetOpacity then HUD:SetOpacity(v) end
-    end,
-})
-TabHUD:CreateToggle({
-    Name = "Lock HUD Positions (ห้ามลาก)",
-    CurrentValue = Config.HUD_LockPositions, Flag = "HUD_LockPositions",
-    Callback = function(v) Config.HUD_LockPositions = v end,
-})
+    TabMob:CreateSection("Tuning")
+    TabMob:CreateSlider({
+        Name = "Gesture Window",
+        Range = {0.05, 0.5}, Increment = 0.05, Suffix = "s",
+        CurrentValue = Config.MOB_GestureWindow, Flag = "MOB_GestureWindow",
+        Callback = function(v) Config.MOB_GestureWindow = v end,
+    })
+    TabMob:CreateSlider({
+        Name = "Control Zone Width",
+        Range = {0, 0.5}, Increment = 0.05,
+        CurrentValue = Config.MOB_ControlZoneW, Flag = "MOB_ControlZoneW",
+        Callback = function(v) Config.MOB_ControlZoneW = v end,
+    })
+    TabMob:CreateSlider({
+        Name = "Control Zone Height",
+        Range = {0, 0.7}, Increment = 0.05,
+        CurrentValue = Config.MOB_ControlZoneH, Flag = "MOB_ControlZoneH",
+        Callback = function(v) Config.MOB_ControlZoneH = v end,
+    })
+    TabMob:CreateToggle({
+        Name = "Debug Print", CurrentValue = Config.MOB_Debug, Flag = "MOB_Debug",
+        Callback = function(v) Config.MOB_Debug = v end,
+    })
+end
 
 -- ─── Preset ───
 local TabPreset = Window:CreateTab("Preset", 4483362458)
-TabPreset:CreateSection("Auto-apply device preset")
 TabPreset:CreateButton({
     Name = "Apply: PC", Callback = function()
         applyPreset("pc")
@@ -1198,15 +995,9 @@ TabPreset:CreateButton({
     end,
 })
 TabPreset:CreateButton({
-    Name = "Apply: Mobile", Callback = function()
+    Name = "Apply: Mobile (gesture)", Callback = function()
         applyPreset("mobile")
-        Rayfield:Notify({Title = "Preset", Content = "Mobile applied", Duration = 3})
-    end,
-})
-TabPreset:CreateButton({
-    Name = "Apply: Console", Callback = function()
-        applyPreset("console")
-        Rayfield:Notify({Title = "Preset", Content = "Console applied", Duration = 3})
+        Rayfield:Notify({Title = "Preset", Content = "Mobile gesture applied", Duration = 3})
     end,
 })
 TabPreset:CreateButton({
@@ -1228,7 +1019,6 @@ _G._MurderSuite = {
     ESP = ESP,
     AR = AR,
     Aim = Aim,
-    HUD = HUD,
     syncUI = function(flag, state)
         Config[flag] = state
         local list = SyncUI[flag]
@@ -1240,19 +1030,20 @@ _G._MurderSuite = {
     cleanup = function()
         for _, c in ipairs(inputConns) do pcall(function() c:Disconnect() end) end
         if espConn then espConn:Disconnect() end
+        pcall(function() Gesture.Destroy() end)
         pcall(function() RunService:UnbindFromRenderStep("MurderAimLock") end)
         pcall(function() ESP:Destroy() end)
         pcall(function() AR.Destroy() end)
         pcall(function() Aim.Destroy() end)
-        pcall(function() if HUD.Destroy then HUD:Destroy() end end)
         pcall(function() Rayfield:Destroy() end)
         _G._MurderSuite = nil
     end,
 }
 
 Rayfield:Notify({
-    Title = "Murder Suite v4 — Unified",
-    Content = ("Device: %s | touch=%s kb=%s pad=%s")
-        :format(Caps.primary, tostring(Caps.touch), tostring(Caps.keyboard), tostring(Caps.gamepad)),
+    Title = "Murder Suite v5 — Gesture Edition",
+    Content = Caps.touch
+        and "2-finger=Aim | 3-finger=Fire | 4-finger=ESP | 5-finger=Aimbot"
+        or "PC mode: RMB/E=Aim | F=Fire | RightShift=ESP",
     Duration = 8,
 })
