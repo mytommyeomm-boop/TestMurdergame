@@ -1,0 +1,865 @@
+--[[
+    MURDER GAME SUITE v2 — Rayfield UI
+    • Auto Repair (perfect skillcheck)
+    • ESP (killer / survivor / generator / offscreen)
+    • Aimbot (gun only, target killer)
+    Toggle ESP: RightShift | Toggle Aim: RightClick (hold)
+]]
+
+if _G._MurderSuite and _G._MurderSuite.cleanup then
+    pcall(_G._MurderSuite.cleanup)
+    task.wait(0.15)
+end
+
+-- ═══════════════ LOAD RAYFIELD ═══════════════
+local Rayfield
+for _, url in ipairs({
+    "https://sirius.menu/rayfield",
+    "https://raw.githubusercontent.com/Footagesus/Rayfield/main/source.lua",
+}) do
+    local ok, res = pcall(function()
+        return loadstring(game:HttpGet(url, true))()
+    end)
+    if ok and type(res) == "table" then Rayfield = res; break end
+end
+if not Rayfield then warn("[Murder Suite] Rayfield failed"); return end
+task.wait(0.3)
+
+-- ═══════════════ SERVICES ═══════════════
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local Workspace         = game:GetService("Workspace")
+local UIS               = game:GetService("UserInputService")
+local RS                = game:GetService("ReplicatedStorage")
+
+local LP        = Players.LocalPlayer
+local Camera    = Workspace.CurrentCamera
+local PlayerGui = LP:WaitForChild("PlayerGui")
+
+-- ═══════════════ CONFIG ═══════════════
+local Config = {
+    -- ESP
+    ESP_Enabled       = true,
+    ESP_ShowKiller    = true,
+    ESP_ShowSurvivor  = true,
+    ESP_ShowGenerator = true,
+    ESP_Offscreen     = true,
+    ESP_ShowName      = true,
+    ESP_ShowDistance  = true,
+    ESP_ShowTR        = true,
+    ESP_MaxDist       = 900,
+    ESP_Interval      = 1/30,
+    ESP_PadSize       = 70,
+    ESP_TextSize      = 14,
+    ESP_KillerColor   = Color3.fromRGB(255, 45, 45),
+    ESP_SurvivorColor = Color3.fromRGB(80, 180, 255),
+    ESP_InjuredColor  = Color3.fromRGB(255, 180, 50),
+    ESP_KnockedColor  = Color3.fromRGB(255, 90, 90),
+    ESP_HookedColor   = Color3.fromRGB(200, 100, 255),
+    ESP_CarriedColor  = Color3.fromRGB(150, 80, 255),
+    ESP_GenColor      = Color3.fromRGB(255, 220, 80),
+    ESP_GenDoneColor  = Color3.fromRGB(80, 255, 80),
+    ESP_ToggleKey     = Enum.KeyCode.RightShift,
+
+    -- Auto Repair
+    AR_Enabled        = true,
+    AR_PreferCenter   = false,
+    AR_CenterTol      = 1.5,
+    AR_SafetyTimeout  = 5,
+    AR_Debug          = false,
+
+    -- Aimbot
+    AIM_Enabled       = false,
+    AIM_RequireAim    = true,     -- ต้องกด Aim Key ค้างไว้
+    AIM_AutoFire      = false,    -- ยิงอัตโนมัติเมื่อล็อค
+    AIM_TargetPart    = "Head",
+    AIM_FOV           = 180,      -- รัศมี pixel จากกลางจอ
+    AIM_Smoothing     = 0.35,     -- 0=snap 1=ไม่ขยับ
+    AIM_WallCheck     = true,
+    AIM_ShowFOV       = true,
+    AIM_ShowTarget    = true,
+    AIM_FireCooldown  = 0.4,
+    AIM_GunKeywords   = "twist,fate,gun,pistol,rifle,shotgun,revolver,smg,sniper",
+    AIM_FOVColor      = Color3.fromRGB(255, 100, 100),
+    AIM_TargetColor   = Color3.fromRGB(255, 50, 50),
+    AIM_Keybind       = Enum.KeyCode.E,       -- hold to aim (keyboard)
+    AIM_UseRightClick = true,                 -- right mouse also aims
+}
+
+-- ═══════════════ ESP CORE ═══════════════
+local ESP = {}
+do
+    local entities, indic, seen = {}, {}, {}
+    local lastTick = 0
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MurderESP"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.DisplayOrder = 999
+    gui.Parent = PlayerGui
+    ESP.Gui = gui
+
+    local FONT = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
+
+    local function getRoot(m)
+        return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
+            or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso")
+            or m:FindFirstChild("Head") or m:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function createESP(model, color)
+        local e = entities[model]
+        if e then
+            e.hl.FillColor = color; e.hl.OutlineColor = color
+            if e.nameLbl then e.nameLbl.TextColor3 = color end
+            return e
+        end
+        local hl = Instance.new("Highlight")
+        hl.Name = "MurderESP_HL"; hl.Adornee = model
+        hl.FillColor = color; hl.FillTransparency = 0.55
+        hl.OutlineColor = color; hl.OutlineTransparency = 0.1
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Parent = gui
+
+        local root = getRoot(model)
+        local bb, nameLbl, distLbl
+        if root then
+            bb = Instance.new("BillboardGui")
+            bb.Name = "MurderESP_BB"; bb.Adornee = root
+            bb.Size = UDim2.new(0, 220, 0, 40)
+            bb.StudsOffset = Vector3.new(0, 3, 0)
+            bb.AlwaysOnTop = true; bb.MaxDistance = Config.ESP_MaxDist
+            bb.LightInfluence = 0; bb.Parent = gui
+
+            nameLbl = Instance.new("TextLabel")
+            nameLbl.BackgroundTransparency = 1
+            nameLbl.Size = UDim2.new(1, 0, 0.5, 0)
+            nameLbl.FontFace = FONT
+            nameLbl.TextSize = Config.ESP_TextSize
+            nameLbl.TextColor3 = color; nameLbl.TextStrokeTransparency = 0.5
+            nameLbl.Text = model.Name; nameLbl.Parent = bb
+
+            distLbl = Instance.new("TextLabel")
+            distLbl.BackgroundTransparency = 1
+            distLbl.Position = UDim2.new(0, 0, 0.5, 0)
+            distLbl.Size = UDim2.new(1, 0, 0.5, 0)
+            distLbl.FontFace = FONT
+            distLbl.TextSize = Config.ESP_TextSize - 2
+            distLbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+            distLbl.TextStrokeTransparency = 0.5
+            distLbl.Parent = bb
+        end
+        e = { hl = hl, bb = bb, nameLbl = nameLbl, distLbl = distLbl }
+        entities[model] = e
+        return e
+    end
+
+    local function destroyESP(m)
+        local e = entities[m]; if not e then return end
+        if e.hl then e.hl:Destroy() end
+        if e.bb then e.bb:Destroy() end
+        entities[m] = nil
+    end
+
+    local function createIndicator(model, color)
+        local i = indic[model]
+        if i then i.frame.BackgroundColor3 = color; return i end
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(0, 26, 0, 26)
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.BackgroundColor3 = color; f.BackgroundTransparency = 0.35
+        f.BorderSizePixel = 0; f.Visible = false; f.ZIndex = 100
+        f.Parent = gui
+        Instance.new("UICorner", f).CornerRadius = UDim.new(1, 0)
+        local s = Instance.new("UIStroke", f)
+        s.Color = Color3.new(1, 1, 1); s.Thickness = 2
+        local a = Instance.new("TextLabel", f)
+        a.BackgroundTransparency = 1; a.Size = UDim2.new(1, 0, 1, 0)
+        a.Text = "▲"; a.TextColor3 = Color3.new(1, 1, 1); a.TextSize = 18
+        a.Font = Enum.Font.GothamBold
+        i = { frame = f, arrow = a }; indic[model] = i
+        return i
+    end
+
+    local function destroyIndicator(m)
+        local i = indic[m]; if not i then return end
+        if i.frame then i.frame:Destroy() end
+        indic[m] = nil
+    end
+
+    local function updateOffscreen(model, root, color)
+        if not Config.ESP_Offscreen then return end
+        local i = createIndicator(model, color)
+        local ss = Camera.ViewportSize
+        local sp, onScreen = Camera:WorldToViewportPoint(root.Position)
+        local inB = onScreen and sp.Z > 0 and sp.X > 0 and sp.X < ss.X and sp.Y > 0 and sp.Y < ss.Y
+        if inB then i.frame.Visible = false; return end
+        local c = ss / 2
+        local dx, dy
+        if sp.Z < 0 then
+            dx = c.X - sp.X; dy = c.Y - sp.Y
+            if math.abs(dx) < 0.1 and math.abs(dy) < 0.1 then dy = 1 end
+        else
+            dx = sp.X - c.X; dy = sp.Y - c.Y
+        end
+        local pad = Config.ESP_PadSize
+        local mx = ss.X / 2 - pad; local my = ss.Y / 2 - pad
+        local sx = dx ~= 0 and (mx / math.abs(dx)) or math.huge
+        local sy = dy ~= 0 and (my / math.abs(dy)) or math.huge
+        local sc = math.min(sx, sy, 1)
+        i.frame.Position = UDim2.fromOffset(c.X + dx * sc, c.Y + dy * sc)
+        i.frame.Visible = true
+        i.arrow.Rotation = math.deg(math.atan2(dy, dx)) + 90
+    end
+
+    local function classifySurvivor(plr)
+        local c = plr.Character; if not c then return nil end
+        if c:GetAttribute("IsCarried") then return "carried" end
+        if c:GetAttribute("IsHooked") then return "hooked" end
+        if CollectionService:HasTag(c, "Knocked") then return "knocked" end
+        if CollectionService:HasTag(c, "Hooked") then return "hooked" end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if h then
+            if h.Health <= 0 then return "dead" end
+            if h.Health < h.MaxHealth * 0.5 then return "injured" end
+        end
+        return "healthy"
+    end
+
+    local function statusColor(plr)
+        local s = classifySurvivor(plr)
+        if s == "hooked" then return Config.ESP_HookedColor, " [HOOKED]" end
+        if s == "knocked" then return Config.ESP_KnockedColor, " [DOWN]" end
+        if s == "carried" then return Config.ESP_CarriedColor, " [CARRIED]" end
+        if s == "injured" then return Config.ESP_InjuredColor, " [INJ]" end
+        return Config.ESP_SurvivorColor, ""
+    end
+
+    local function processCharacter(plr, color, tag)
+        local char = plr.Character
+        local root = getRoot(char); if not root then return end
+        local e = createESP(char, color)
+        if e.bb then e.bb.MaxDistance = Config.ESP_MaxDist end
+        if e.nameLbl then
+            e.nameLbl.Text = (Config.ESP_ShowName and plr.Name or "") .. (tag or "")
+            e.nameLbl.TextColor3 = color
+            e.nameLbl.TextSize = Config.ESP_TextSize
+        end
+        local dist = (root.Position - Camera.CFrame.Position).Magnitude
+        if e.distLbl then
+            local txt = Config.ESP_ShowDistance and string.format("%dm", math.floor(dist)) or ""
+            if plr.Team and plr.Team.Name == "Killer" and Config.ESP_ShowTR then
+                local tr = char:GetAttribute("TerrorRadius") or plr:GetAttribute("TerrorRadius") or 0
+                if tr > 0 then txt = txt .. string.format(" • TR %dm", math.floor(tr)) end
+            end
+            e.distLbl.Text = txt
+            e.distLbl.TextSize = Config.ESP_TextSize - 2
+        end
+        e.hl.FillColor = color; e.hl.OutlineColor = color
+        seen[char] = true
+        if dist < Config.ESP_MaxDist * 2 then updateOffscreen(char, root, color) end
+    end
+
+    local function processGenerator(gen)
+        local root = getRoot(gen); if not root then return end
+        local prog = gen:GetAttribute("RepairProgress") or 0
+        local done = prog >= 100
+        local color = done and Config.ESP_GenDoneColor or Config.ESP_GenColor
+        local e = createESP(gen, color)
+        if e.bb then e.bb.MaxDistance = Config.ESP_MaxDist end
+        if e.nameLbl then
+            e.nameLbl.Text = "Generator"
+            e.nameLbl.TextColor3 = color
+            e.nameLbl.TextSize = Config.ESP_TextSize
+        end
+        local dist = (root.Position - Camera.CFrame.Position).Magnitude
+        if e.distLbl then
+            local s = done and "✓ DONE" or string.format("%d%%", math.floor(prog))
+            e.distLbl.Text = string.format("%s • %dm", s, math.floor(dist))
+            e.distLbl.TextSize = Config.ESP_TextSize - 2
+        end
+        e.hl.FillColor = color; e.hl.OutlineColor = color
+        seen[gen] = true
+        if dist < Config.ESP_MaxDist * 2 then updateOffscreen(gen, root, color) end
+    end
+
+    function ESP:ClearAll()
+        for m in pairs(entities) do destroyESP(m) end
+        for m in pairs(indic) do destroyIndicator(m) end
+    end
+
+    function ESP:Tick()
+        if not Config.ESP_Enabled then return end
+        local now = os.clock()
+        if now - lastTick < Config.ESP_Interval then return end
+        lastTick = now
+
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr == LP or not plr.Character then continue end
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then continue end
+            local tn = plr.Team and plr.Team.Name or ""
+            if tn == "Killer" and Config.ESP_ShowKiller then
+                processCharacter(plr, Config.ESP_KillerColor, " [KILLER]")
+            elseif tn == "Survivors" and Config.ESP_ShowSurvivor then
+                local c, t = statusColor(plr)
+                processCharacter(plr, c, t)
+            end
+        end
+
+        if Config.ESP_ShowGenerator then
+            for _, gen in ipairs(CollectionService:GetTagged("Generator")) do
+                if gen:IsA("Model") and gen:IsDescendantOf(Workspace) then
+                    processGenerator(gen)
+                end
+            end
+        end
+
+        for m in pairs(entities) do if not seen[m] then destroyESP(m) end end
+        for m in pairs(indic) do if not seen[m] then destroyIndicator(m) end end
+        table.clear(seen)
+    end
+
+    function ESP:Destroy()
+        self:ClearAll(); if gui then gui:Destroy() end
+    end
+end
+
+local espConn = RunService.Heartbeat:Connect(function() ESP:Tick() end)
+
+-- ═══════════════ AUTO REPAIR CORE ═══════════════
+local AR = {}
+do
+    local RG = RS:WaitForChild("Remotes"):WaitForChild("Generator")
+    local SkillEvent  = RG:WaitForChild("SkillCheckEvent")
+    local ResultEvent = RG:WaitForChild("SkillCheckResultEvent")
+    local Sc = RS.Remotes.KillerPerks.kingscourge
+    local ScourgeStart = Sc:WaitForChild("KingScourgeStart")
+    local ScourgeHit   = Sc:WaitForChild("KingScourgeHit")
+    local ScourgeEnd   = Sc:WaitForChild("KingScourgeEnd")
+
+    local sg = PlayerGui:WaitForChild("SkillCheckPromptGui"):WaitForChild("Check")
+    local line = sg:WaitForChild("Line")
+    local goal = sg:WaitForChild("Goal")
+
+    local active, blockedFail = false, false
+    local genId, pointId = nil, nil
+    local isScourge, remaining = false, 0
+
+    local hooked = false
+    if hookfunction and newcclosure then
+        local old = ResultEvent.FireServer
+        hookfunction(old, newcclosure(function(self, action, ...)
+            if blockedFail and action == "fail" then return end
+            return old(self, action, ...)
+        end))
+        hooked = true
+    elseif getrawmetatable and setreadonly and newcclosure then
+        local mt = getrawmetatable(game)
+        local oldNC = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            if getnamecallmethod() == "FireServer" and self == ResultEvent and blockedFail then
+                local a = {...}; if a[1] == "fail" then return end
+            end
+            return oldNC(self, ...)
+        end)
+        setreadonly(mt, true); hooked = true
+    end
+    if Config.AR_Debug then print("[AR] Fail-hook:", hooked) end
+
+    local function norm(d) return d % 360 end
+    local function inSuccess()
+        local l = norm(line.Rotation)
+        local lo = norm(102 + goal.Rotation)
+        local hi = norm(116 + goal.Rotation)
+        if lo <= hi then return l >= lo and l <= hi end
+        return l >= lo or l <= hi
+    end
+    local function nearCenter()
+        local l = norm(line.Rotation)
+        local c = norm(109 + goal.Rotation)
+        return math.abs(((l - c + 180) % 360) - 180) <= Config.AR_CenterTol
+    end
+    local function shouldFire()
+        return Config.AR_PreferCenter and nearCenter() or inSuccess()
+    end
+    local function log(...) if Config.AR_Debug then print("[AR]", ...) end end
+
+    local function runSkillcheck(g, p)
+        genId, pointId = g, p
+        active, blockedFail = true, true
+        task.wait(0.55)
+        if not active then return end
+        local t0 = os.clock()
+        while active and (os.clock() - t0 < Config.AR_SafetyTimeout) do
+            if shouldFire() then
+                ResultEvent:FireServer("success", 1, genId, pointId)
+                log(("SUCCESS line=%.1f goal=%.1f"):format(line.Rotation, goal.Rotation))
+                active = false; return
+            end
+            RunService.Heartbeat:Wait()
+        end
+        if Config.AR_Debug and active then log("TIMEOUT") end
+        active = false
+    end
+
+    SkillEvent.OnClientEvent:Connect(function(g, p)
+        if not Config.AR_Enabled then return end
+        task.spawn(runSkillcheck, g, p)
+    end)
+
+    ScourgeStart.OnClientEvent:Connect(function(g, p, hits)
+        if not Config.AR_Enabled then return end
+        genId, pointId = g, p
+        remaining = hits or 1
+        isScourge, active, blockedFail = true, true, true
+        task.spawn(function()
+            task.wait(0.55)
+            local lastG = goal.Rotation; local t0 = os.clock()
+            while isScourge and remaining > 0 and (os.clock() - t0 < Config.AR_SafetyTimeout * (remaining + 1)) do
+                if shouldFire() then
+                    ScourgeHit:FireServer(pointId, "success")
+                    remaining = remaining - 1
+                    if remaining <= 0 then break end
+                    local tw = os.clock()
+                    while goal.Rotation == lastG and (os.clock() - tw) < 2 do RunService.Heartbeat:Wait() end
+                    lastG = goal.Rotation; task.wait(0.1)
+                end
+                RunService.Heartbeat:Wait()
+            end
+            active, isScourge = false, false
+        end)
+    end)
+
+    ScourgeEnd.OnClientEvent:Connect(function(id)
+        if id == pointId then active, isScourge, remaining = false, false, 0 end
+    end)
+
+    function AR.Cancel() active, blockedFail, isScourge, remaining = false, false, false, 0 end
+    function AR.Destroy() AR.Cancel() end
+
+    task.spawn(function()
+        while true do task.wait(1); if not active then blockedFail = false end end
+    end)
+end
+
+-- ═══════════════ AIMBOT CORE ═══════════════
+local Aim = {}
+do
+    local aimHeld      = false
+    local lastFire     = 0
+    local currentTarget = nil
+    local targetScreen  = nil
+
+    -- UI
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MurderAim"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 998
+    gui.Parent = PlayerGui
+    Aim.Gui = gui
+
+    -- FOV circle
+    local fovFrame = Instance.new("Frame")
+    fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    fovFrame.Position = UDim2.fromScale(0.5, 0.5)
+    fovFrame.BackgroundTransparency = 1
+    fovFrame.BorderSizePixel = 0
+    fovFrame.Visible = false
+    fovFrame.Parent = gui
+    Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
+    local fovStroke = Instance.new("UIStroke", fovFrame)
+    fovStroke.Thickness = 1.5; fovStroke.Transparency = 0.4
+    Aim.FovFrame = fovFrame
+
+    -- Target box
+    local tBox = Instance.new("Frame")
+    tBox.AnchorPoint = Vector2.new(0.5, 0.5)
+    tBox.BackgroundTransparency = 1
+    tBox.BorderSizePixel = 0
+    tBox.Visible = false
+    tBox.Parent = gui
+    Instance.new("UICorner", tBox).CornerRadius = UDim.new(0, 4)
+    local tStroke = Instance.new("UIStroke", tBox)
+    tStroke.Thickness = 2; tStroke.Transparency = 0.1
+    Aim.TargetBox = tBox
+
+    -- Line (from center to target)
+    local line = Instance.new("Frame")
+    line.AnchorPoint = Vector2.new(0, 0.5)
+    line.BackgroundColor3 = Config.AIM_TargetColor
+    line.BackgroundTransparency = 0.4
+    line.BorderSizePixel = 0
+    line.Size = UDim2.new(0, 0, 0, 2)
+    line.Visible = false
+    line.Parent = gui
+    Aim.Line = line
+
+    -- Helpers
+    local function getKiller()
+        for _, plr in Players:GetPlayers() do
+            if plr == LP then continue end
+            if not plr.Team or plr.Team.Name ~= "Killer" then continue end
+            if not plr.Character then continue end
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then continue end
+            return plr, plr.Character
+        end
+    end
+
+    local function getPart(char)
+        return char:FindFirstChild(Config.AIM_TargetPart)
+            or char:FindFirstChild("Head")
+            or char:FindFirstChild("UpperTorso")
+            or char:FindFirstChild("Torso")
+            or char:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function wallBlocked(targetPos, targetChar)
+        if not Config.AIM_WallCheck then return false end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {LP.Character or LP, Camera, targetChar}
+        return workspace:Raycast(Camera.CFrame.Position, targetPos - Camera.CFrame.Position, params) ~= nil
+    end
+
+    local function screenDist(targetPos)
+        local sp, onScreen = Camera:WorldToViewportPoint(targetPos)
+        if not onScreen or sp.Z < 0 then return math.huge end
+        local c = Camera.ViewportSize / 2
+        return (Vector2.new(sp.X, sp.Y) - c).Magnitude, sp
+    end
+
+    local function aimAt(targetPos)
+        local camPos = Camera.CFrame.Position
+        local targetCF = CFrame.lookAt(camPos, targetPos)
+        local s = Config.AIM_Smoothing
+        if s <= 0.001 or s >= 0.999 then
+            Camera.CFrame = targetCF
+        else
+            Camera.CFrame = Camera.CFrame:Lerp(targetCF, s)
+        end
+    end
+
+    -- Has gun check
+    local function hasGun()
+        if not LP.Character then return false end
+        local tool = LP.Character:FindFirstChildOfClass("Tool")
+        if not tool then return false end
+        local lower = tool.Name:lower()
+        for kw in Config.AIM_GunKeywords:gmatch("[^,]+") do
+            if lower:find(kw:gsub("%s+", ""):lower(), 1, true) then return true end
+        end
+        return false
+    end
+
+    function Aim.SetHeld(state) aimHeld = state end
+
+    function Aim.Step()
+        -- Draw FOV
+        if Config.AIM_Enabled and Config.AIM_ShowFOV then
+            fovFrame.Visible = true
+            fovFrame.Size = UDim2.fromOffset(Config.AIM_FOV * 2, Config.AIM_FOV * 2)
+            fovStroke.Color = Config.AIM_FOVColor
+        else
+            fovFrame.Visible = false
+        end
+
+        -- Reset visuals
+        tBox.Visible = false
+        line.Visible = false
+        currentTarget = nil
+        targetScreen = nil
+
+        if not Config.AIM_Enabled then return end
+        if Config.AIM_RequireAim and not aimHeld then return end
+
+        local plr, char = getKiller()
+        if not plr then return end
+        local part = getPart(char)
+        if not part then return end
+
+        local dist, sp = screenDist(part.Position)
+        if dist > Config.AIM_FOV then return end
+        if wallBlocked(part.Position, char) then return end
+
+        -- Lock on
+        aimAt(part.Position)
+        currentTarget = plr
+        targetScreen = sp
+
+        -- Draw target box
+        if Config.AIM_ShowTarget and sp then
+            tBox.Visible = true
+            tBox.Position = UDim2.fromOffset(sp.X, sp.Y)
+            tBox.Size = UDim2.fromOffset(50, 50)
+            tStroke.Color = Config.AIM_TargetColor
+
+            local c = Camera.ViewportSize / 2
+            local dx = sp.X - c.X
+            local dy = sp.Y - c.Y
+            local len = math.sqrt(dx * dx + dy * dy)
+            if len > 5 then
+                line.Visible = true
+                line.Position = UDim2.fromOffset(c.X, c.Y)
+                line.Size = UDim2.new(0, len, 0, 2)
+                line.Rotation = math.deg(math.atan2(dy, dx))
+            end
+        end
+
+        -- Auto fire
+        if Config.AIM_AutoFire and hasGun() then
+            if os.clock() - lastFire >= Config.AIM_FireCooldown then
+                local tool = LP.Character:FindFirstChildOfClass("Tool")
+                if tool then
+                    pcall(function() tool:Activate() end)
+                    lastFire = os.clock()
+                end
+            end
+        end
+    end
+
+    function Aim.GetTarget() return currentTarget end
+
+    function Aim.Destroy()
+        if gui then gui:Destroy() end
+    end
+end
+
+-- Hook aimbot into render pipeline AFTER camera update
+RunService:BindToRenderStep("MurderAimLock", Enum.RenderPriority.Camera.Value + 1, function()
+    Aim.Step()
+end)
+
+-- ═══════════════ AIM KEY HANDLING ═══════════════
+local aimKeyConnBegan = UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if (Config.AIM_UseRightClick and input.UserInputType == Enum.UserInputType.MouseButton2)
+    or (input.KeyCode == Config.AIM_Keybind) then
+        Aim.SetHeld(true)
+    end
+end)
+local aimKeyConnEnded = UIS.InputEnded:Connect(function(input, gp)
+    if (Config.AIM_UseRightClick and input.UserInputType == Enum.UserInputType.MouseButton2)
+    or (input.KeyCode == Config.AIM_Keybind) then
+        Aim.SetHeld(false)
+    end
+end)
+
+-- ═══════════════ RAYFIELD UI ═══════════════
+local Window = Rayfield:CreateWindow({
+    Name = "Murder Game Suite v2",
+    LoadingTitle = "Murder Game Suite",
+    LoadingSubtitle = "Auto Repair + ESP + Aimbot",
+    Theme = "Amethyst",
+    KeySystem = false,
+    ConfigurationSaving = { Enabled = false },
+})
+
+-- ─── Auto Repair Tab ───
+local TabAR = Window:CreateTab("Auto Repair", 4483362458)
+TabAR:CreateSection("Master")
+TabAR:CreateToggle({
+    Name = "Enable Auto Repair",
+    CurrentValue = Config.AR_Enabled,
+    Flag = "AR_Enabled",
+    Callback = function(s) Config.AR_Enabled = s; if not s then AR.Cancel() end end,
+})
+TabAR:CreateSection("Tuning")
+TabAR:CreateToggle({
+    Name = "Prefer Center",
+    CurrentValue = Config.AR_PreferCenter,
+    Flag = "AR_PreferCenter",
+    Callback = function(v) Config.AR_PreferCenter = v end,
+})
+TabAR:CreateSlider({
+    Name = "Center Tolerance", Range = {0, 7}, Increment = 0.5, Suffix = "°",
+    CurrentValue = Config.AR_CenterTol, Flag = "AR_CenterTol",
+    Callback = function(v) Config.AR_CenterTol = v end,
+})
+TabAR:CreateSlider({
+    Name = "Safety Timeout", Range = {1, 15}, Increment = 0.5, Suffix = "s",
+    CurrentValue = Config.AR_SafetyTimeout, Flag = "AR_SafetyTimeout",
+    Callback = function(v) Config.AR_SafetyTimeout = v end,
+})
+TabAR:CreateToggle({
+    Name = "Debug Log",
+    CurrentValue = Config.AR_Debug, Flag = "AR_Debug",
+    Callback = function(v) Config.AR_Debug = v end,
+})
+
+-- ─── ESP Tab ───
+local TabESP = Window:CreateTab("ESP", 4483362458)
+TabESP:CreateSection("Master")
+local espToggleUI
+espToggleUI = TabESP:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = Config.ESP_Enabled, Flag = "ESP_Enabled",
+    Callback = function(s) Config.ESP_Enabled = s; if not s then ESP:ClearAll() end end,
+})
+TabESP:CreateSection("Entities")
+TabESP:CreateToggle({ Name = "Show Killer", CurrentValue = true, Flag = "ESP_ShowKiller", Callback = function(v) Config.ESP_ShowKiller = v end })
+TabESP:CreateToggle({ Name = "Show Survivors", CurrentValue = true, Flag = "ESP_ShowSurvivor", Callback = function(v) Config.ESP_ShowSurvivor = v end })
+TabESP:CreateToggle({ Name = "Show Generators", CurrentValue = true, Flag = "ESP_ShowGenerator", Callback = function(v) Config.ESP_ShowGenerator = v end })
+TabESP:CreateSection("Visual")
+TabESP:CreateToggle({ Name = "Offscreen Indicators", CurrentValue = true, Flag = "ESP_Offscreen", Callback = function(v) Config.ESP_Offscreen = v end })
+TabESP:CreateToggle({ Name = "Show Names", CurrentValue = true, Flag = "ESP_ShowName", Callback = function(v) Config.ESP_ShowName = v end })
+TabESP:CreateToggle({ Name = "Show Distance", CurrentValue = true, Flag = "ESP_ShowDistance", Callback = function(v) Config.ESP_ShowDistance = v end })
+TabESP:CreateToggle({ Name = "Show Terror Radius", CurrentValue = true, Flag = "ESP_ShowTR", Callback = function(v) Config.ESP_ShowTR = v end })
+TabESP:CreateSlider({ Name = "Max Distance", Range = {100, 3000}, Increment = 50, Suffix = "m", CurrentValue = 900, Flag = "ESP_MaxDist", Callback = function(v) Config.ESP_MaxDist = v end })
+TabESP:CreateSlider({ Name = "Update FPS", Range = {10, 60}, Increment = 5, Suffix = " fps", CurrentValue = 30, Flag = "ESP_FPS", Callback = function(v) Config.ESP_Interval = 1 / v end })
+TabESP:CreateSection("Colors")
+TabESP:CreateColorPicker({ Name = "Killer", Color = Config.ESP_KillerColor, Flag = "ESP_KillerColor", Callback = function(c) Config.ESP_KillerColor = c end })
+TabESP:CreateColorPicker({ Name = "Survivor", Color = Config.ESP_SurvivorColor, Flag = "ESP_SurvivorColor", Callback = function(c) Config.ESP_SurvivorColor = c end })
+TabESP:CreateColorPicker({ Name = "Injured", Color = Config.ESP_InjuredColor, Flag = "ESP_InjuredColor", Callback = function(c) Config.ESP_InjuredColor = c end })
+TabESP:CreateColorPicker({ Name = "Knocked", Color = Config.ESP_KnockedColor, Flag = "ESP_KnockedColor", Callback = function(c) Config.ESP_KnockedColor = c end })
+TabESP:CreateColorPicker({ Name = "Hooked", Color = Config.ESP_HookedColor, Flag = "ESP_HookedColor", Callback = function(c) Config.ESP_HookedColor = c end })
+TabESP:CreateColorPicker({ Name = "Generator", Color = Config.ESP_GenColor, Flag = "ESP_GenColor", Callback = function(c) Config.ESP_GenColor = c end })
+
+-- ─── Aimbot Tab ───
+local TabAim = Window:CreateTab("Aimbot", 4483362458)
+TabAim:CreateSection("Master")
+local aimToggleUI
+aimToggleUI = TabAim:CreateToggle({
+    Name = "Enable Aimbot",
+    CurrentValue = Config.AIM_Enabled, Flag = "AIM_Enabled",
+    Callback = function(s) Config.AIM_Enabled = s end,
+})
+TabAim:CreateToggle({
+    Name = "Require Aim Key (Hold)",
+    CurrentValue = Config.AIM_RequireAim, Flag = "AIM_RequireAim",
+    Callback = function(s) Config.AIM_RequireAim = s end,
+})
+TabAim:CreateToggle({
+    Name = "Use Right Mouse to Aim",
+    CurrentValue = Config.AIM_UseRightClick, Flag = "AIM_UseRightClick",
+    Callback = function(s) Config.AIM_UseRightClick = s end,
+})
+TabAim:CreateKeybind({
+    Name = "Aim Key (Keyboard)",
+    CurrentValue = "E", Flag = "AIM_Keybind",
+    Callback = function(k)
+        local kc = Enum.KeyCode[k]
+        if kc then Config.AIM_Keybind = kc end
+    end,
+})
+
+TabAim:CreateSection("Target")
+TabAim:CreateDropdown({
+    Name = "Target Part",
+    Options = {"Head", "UpperTorso", "Torso", "HumanoidRootPart"},
+    CurrentOption = {Config.AIM_TargetPart},
+    Flag = "AIM_TargetPart",
+    Callback = function(o) Config.AIM_TargetPart = o[1] or o end,
+})
+TabAim:CreateToggle({
+    Name = "Wall Check (ไม่ยิงผ่านกำแพง)",
+    CurrentValue = Config.AIM_WallCheck, Flag = "AIM_WallCheck",
+    Callback = function(v) Config.AIM_WallCheck = v end,
+})
+TabAim:CreateSlider({
+    Name = "FOV Radius",
+    Range = {50, 500}, Increment = 10, Suffix = " px",
+    CurrentValue = Config.AIM_FOV, Flag = "AIM_FOV",
+    Callback = function(v) Config.AIM_FOV = v end,
+})
+TabAim:CreateSlider({
+    Name = "Smoothing",
+    Range = {0, 0.95}, Increment = 0.05,
+    CurrentValue = Config.AIM_Smoothing, Flag = "AIM_Smoothing",
+    Callback = function(v) Config.AIM_Smoothing = v end,
+})
+
+TabAim:CreateSection("Auto Fire")
+TabAim:CreateToggle({
+    Name = "Auto Fire (only with gun)",
+    CurrentValue = Config.AIM_AutoFire, Flag = "AIM_AutoFire",
+    Callback = function(v) Config.AIM_AutoFire = v end,
+})
+TabAim:CreateSlider({
+    Name = "Fire Cooldown",
+    Range = {0.1, 3}, Increment = 0.1, Suffix = "s",
+    CurrentValue = Config.AIM_FireCooldown, Flag = "AIM_FireCooldown",
+    Callback = function(v) Config.AIM_FireCooldown = v end,
+})
+TabAim:CreateInput({
+    Name = "Gun Keywords (comma separated)",
+    CurrentValue = Config.AIM_GunKeywords, Flag = "AIM_GunKeywords",
+    PlaceholderText = "twist,fate,gun,pistol,rifle",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(v) Config.AIM_GunKeywords = v end,
+})
+
+TabAim:CreateSection("Visual")
+TabAim:CreateToggle({
+    Name = "Show FOV Circle",
+    CurrentValue = Config.AIM_ShowFOV, Flag = "AIM_ShowFOV",
+    Callback = function(v) Config.AIM_ShowFOV = v end,
+})
+TabAim:CreateToggle({
+    Name = "Show Target Box",
+    CurrentValue = Config.AIM_ShowTarget, Flag = "AIM_ShowTarget",
+    Callback = function(v) Config.AIM_ShowTarget = v end,
+})
+TabAim:CreateColorPicker({
+    Name = "FOV Color",
+    Color = Config.AIM_FOVColor, Flag = "AIM_FOVColor",
+    Callback = function(c) Config.AIM_FOVColor = c end,
+})
+TabAim:CreateColorPicker({
+    Name = "Target Color",
+    Color = Config.AIM_TargetColor, Flag = "AIM_TargetColor",
+    Callback = function(c) Config.AIM_TargetColor = c end,
+})
+
+-- ─── Settings Tab ───
+local TabSet = Window:CreateTab("Settings", 4483362458)
+TabSet:CreateSection("Keybinds")
+TabSet:CreateKeybind({
+    Name = "ESP Toggle Key",
+    CurrentValue = "RightShift", Flag = "ESP_ToggleKey",
+    Callback = function(key)
+        local k = Enum.KeyCode[key]
+        if k then Config.ESP_ToggleKey = k end
+    end,
+})
+TabSet:CreateSection("Actions")
+TabSet:CreateButton({ Name = "Clear ESP", Callback = function() ESP:ClearAll() end })
+TabSet:CreateButton({ Name = "Unload Suite", Callback = function() if _G._MurderSuite then _G._MurderSuite.cleanup() end end })
+
+-- ═══════════════ ESP TOGGLE KEY ═══════════════
+local espKbConn = UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Config.ESP_ToggleKey then
+        Config.ESP_Enabled = not Config.ESP_Enabled
+        if not Config.ESP_Enabled then ESP:ClearAll() end
+        if espToggleUI then pcall(function() espToggleUI:Set(Config.ESP_Enabled) end) end
+    end
+end)
+
+-- ═══════════════ CLEANUP ═══════════════
+_G._MurderSuite = {
+    cleanup = function()
+        if espConn then espConn:Disconnect() end
+        if espKbConn then espKbConn:Disconnect() end
+        if aimKeyConnBegan then aimKeyConnBegan:Disconnect() end
+        if aimKeyConnEnded then aimKeyConnEnded:Disconnect() end
+        pcall(function() RunService:UnbindFromRenderStep("MurderAimLock") end)
+        pcall(function() ESP:Destroy() end)
+        pcall(function() AR.Destroy() end)
+        pcall(function() Aim.Destroy() end)
+        pcall(function() Rayfield:Destroy() end)
+        _G._MurderSuite = nil
+    end,
+}
+
+Rayfield:Notify({
+    Title = "Murder Game Suite v2",
+    Content = "Loaded! Hold RMB to aim, ESP = RightShift",
+    Duration = 6,
+})
