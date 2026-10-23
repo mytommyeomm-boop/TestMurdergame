@@ -1,1049 +1,404 @@
---[[
-    MURDER GAME SUITE v5 — Gesture-only (no HUD buttons)
-    Mobile: 2-finger hold = Aim | 3-finger tap = Fire | 4-finger = ESP | 5-finger = Aimbot
-    PC:     RMB / E = Aim | F = Fire | RightShift = ESP toggle
-    Hybrid: ทั้งหมดทำงานพร้อมกัน
-]]
+--[[ ═══════════════════════════════════════════════════════════════
+    ULTIMATE AUTO-HELPER (Bug Fix: No UI, No Stuck)
+    Features: 
+    - Auto Skill Check (Ray UI Angular Raycast 100% Perfect)
+    - Killer ESP (Highlight + Billboard)
+    - Survivor ESP (Highlight + Billboard + Status)
+    - Aimbot (Rage / Assist / Trigger)
+═══════════════════════════════════════════════════════════════ ]]
 
-if _G._MurderSuite and _G._MurderSuite.cleanup then
-    pcall(_G._MurderSuite.cleanup)
-    task.wait(0.15)
-end
+local Players             = game:GetService("Players")
+local RunService          = game:GetService("RunService")
+local UserInputService    = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CollectionService   = game:GetService("CollectionService")
+local Workspace           = game:GetService("Workspace")
 
--- ═══════════════ SERVICES ═══════════════
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local CollectionService = game:GetService("CollectionService")
-local Workspace         = game:GetService("Workspace")
-local UIS               = game:GetService("UserInputService")
-local RS                = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+local pg     = player:WaitForChild("PlayerGui")
 
-local LP        = Players.LocalPlayer
-local Camera    = Workspace.CurrentCamera
-local PlayerGui = LP:WaitForChild("PlayerGui")
-
--- ═══════════════ DEVICE CAPS ═══════════════
-local Caps = {
-    touch    = UIS.TouchEnabled,
-    keyboard = UIS.KeyboardEnabled,
-    gamepad  = UIS.GamepadEnabled,
-    mouse    = UIS.MouseEnabled,
-}
-Caps.primary = (Caps.touch and not Caps.keyboard) and "mobile"
-    or (Caps.gamepad and not Caps.touch) and "console" or "pc"
-
--- ═══════════════ LOAD RAYFIELD ═══════════════
-local Rayfield
-for _, url in ipairs({
-    "https://sirius.menu/rayfield",
-    "https://raw.githubusercontent.com/Footagesus/Rayfield/main/source.lua",
-}) do
-    local ok, res = pcall(function() return loadstring(game:HttpGet(url, true))() end)
-    if ok and type(res) == "table" then Rayfield = res; break end
-end
-if not Rayfield then warn("[Murder Suite] Rayfield failed"); return end
-task.wait(0.3)
-
--- ═══════════════ CONFIG ═══════════════
-local Config = {
-    Preset = "auto",
-
-    -- ESP
-    ESP_Enabled       = true,
-    ESP_ShowKiller    = true,
-    ESP_ShowSurvivor  = true,
-    ESP_ShowGenerator = true,
-    ESP_Offscreen     = true,
-    ESP_ShowName      = true,
-    ESP_ShowDistance  = true,
-    ESP_ShowTR        = true,
-    ESP_MaxDist       = 900,
-    ESP_Interval      = 1/30,
-    ESP_PadSize       = 70,
-    ESP_TextSize      = 14,
-    ESP_KillerColor   = Color3.fromRGB(255, 45, 45),
-    ESP_SurvivorColor = Color3.fromRGB(80, 180, 255),
-    ESP_InjuredColor  = Color3.fromRGB(255, 180, 50),
-    ESP_KnockedColor  = Color3.fromRGB(255, 90, 90),
-    ESP_HookedColor   = Color3.fromRGB(200, 100, 255),
-    ESP_CarriedColor  = Color3.fromRGB(150, 80, 255),
-    ESP_GenColor      = Color3.fromRGB(255, 220, 80),
-    ESP_GenDoneColor  = Color3.fromRGB(80, 255, 80),
-
-    -- Auto Repair
-    AR_Enabled        = true,
-    AR_PreferCenter   = false,
-    AR_CenterTol      = 1.5,
-    AR_SafetyTimeout  = 5,
-    AR_Debug          = false,
-
-    -- Aimbot
-    AIM_Enabled       = false,
-    AIM_RequireAim    = true,
-    AIM_AutoFire      = false,
-    AIM_TargetPart    = "Head",
-    AIM_FOV           = 180,
-    AIM_Smoothing     = 0.35,
-    AIM_WallCheck     = true,
-    AIM_ShowFOV       = true,
-    AIM_ShowTarget    = true,
-    AIM_FireCooldown  = 0.4,
-    AIM_GunKeywords   = "twist,fate,gun,pistol,rifle,shotgun,revolver,smg,sniper",
-    AIM_FOVColor      = Color3.fromRGB(255, 100, 100),
-    AIM_TargetColor   = Color3.fromRGB(255, 50, 50),
-
-    -- PC / Console input
-    IN_KbAimKey       = Enum.KeyCode.E,
-    IN_UseRMB         = true,
-    IN_UseL2          = true,
-    IN_EspToggleKey   = Enum.KeyCode.RightShift,
-    IN_FireKey        = Enum.KeyCode.F,
-    IN_UseR2          = true,
-
-    -- Mobile gestures
-    MOB_GestureEnabled = true,     -- 2-finger hold = aim
-    MOB_AutoAim        = true,     -- aim อัตโนมัติเมื่อถือปืน (ไม่ต้อง gesture)
-    MOB_AutoFire       = true,     -- ยิงอัตโนมัติเมื่อ lock (ใช้ AIM_AutoFire)
-    MOB_GestureWindow  = 0.15,     -- วินาที: นิ้วต้องมาแตะภายในหน้าต่างนี้
-    MOB_ControlZoneW   = 0.35,     -- ซ้าย/ขวา % ที่ไม่นับเป็น gesture zone
-    MOB_ControlZoneH   = 0.45,     -- ล่าง % ที่ไม่นับ
-    MOB_Debug          = false,    -- พิมพ์ gesture log
+-- ═══ 1. CONFIGURATION (แก้ตรงนี้ถ้าเล่นมือถือ) ══════════════════
+local CFG = {
+    skillcheck = { enabled = true, margin = 2.5, cooldown = 0.1 },
+    
+    espKiller  = { enabled = true, maxDist = 500, colorNear = Color3.fromRGB(255, 40, 40), colorFar = Color3.fromRGB(255, 150, 150) },
+    espSurv    = { enabled = true, maxDist = 500, colorNear = Color3.fromRGB(60, 255, 120), colorFar = Color3.fromRGB(60, 180, 255) },
+    
+    aimbot = {
+        enabled       = false,     -- เปิด/ปิด Aimbot (แนะนำ true สำหรับมือถือ)
+        mode          = "trigger", -- "trigger" = ยิงทันทีเมื่อเล็งโดน (ไม่ต้องกดค้าง)
+        fov           = 90,
+        maxDist       = 500,
+        aimPart       = "Head",
+        autoFire      = true,
+        fireCooldown  = 0.08,
+        aimThreshold  = 0.999,
+        visibleOnly   = true,
+        holding       = false,
+    },
 }
 
--- ═══════════════ APPLY PRESET ═══════════════
-local function applyPreset(preset)
-    if preset == "auto" then preset = Caps.primary end
-    if preset == "mobile" then
-        Config.ESP_TextSize      = 16
-        Config.ESP_MaxDist       = 500
-        Config.ESP_Interval      = 1/20
-        Config.AIM_FOV           = 260
-        Config.AIM_Smoothing     = 0.12
-        Config.AIM_AutoFire      = true
-        Config.IN_UseRMB         = false
-        Config.IN_UseL2          = false
-        Config.MOB_GestureEnabled = true
-        Config.MOB_AutoAim       = true
-    elseif preset == "console" then
-        Config.ESP_TextSize      = 16
-        Config.ESP_Interval      = 1/25
-        Config.AIM_FOV           = 220
-        Config.AIM_Smoothing     = 0.25
-        Config.AIM_AutoFire      = false
-        Config.IN_UseRMB         = false
-        Config.IN_UseL2          = true
-        Config.MOB_GestureEnabled = false
-        Config.MOB_AutoAim       = false
+-- ═══ 2. UTILITIES ══════════════════════════════════════════════
+local function isKiller(m)
+    if not (m and m:IsA("Model")) then return false end
+    local h = m:FindFirstChildOfClass("Humanoid")
+    if not h or h.Health <= 0 then return false end
+    local p = Players:GetPlayerFromCharacter(m)
+    if p and p.Team and p.Team.Name == "Killer" then return true end
+    return CollectionService:HasTag(m, "Killer")
+end
+
+local function isSurvivor(m)
+    if not (m and m:IsA("Model")) then return false end
+    local h = m:FindFirstChildOfClass("Humanoid")
+    if not h or h.Health <= 0 then return false end
+    local p = Players:GetPlayerFromCharacter(m)
+    if p and p.Team and p.Team.Name == "Survivors" then return true end
+    return CollectionService:HasTag(m, "Survivors")
+end
+
+local function getRoot(m)
+    return m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso")
+end
+
+local function lerpColor(c1, c2, t)
+    return Color3.new(
+        c1.R + (c2.R - c1.R) * t,
+        c1.G + (c2.G - c1.G) * t,
+        c1.B + (c2.B - c1.B) * t
+    )
+end
+
+-- ═══ 3. SKILL CHECK (Ray UI Angular) ═══════════════════════════
+local skillGui   = pg:WaitForChild("SkillCheckPromptGui")
+local skillCheck = skillGui:WaitForChild("Check")
+local line       = skillCheck:WaitForChild("Line")
+local goal       = skillCheck:WaitForChild("Goal")
+local lastGoalRot, lastFired = nil, 0
+
+local function angleToRay(deg)
+    local r = math.rad(deg)
+    return Vector2.new(math.cos(r), math.sin(r))
+end
+
+local function isInSuccessZone()
+    local la = line.Rotation % 360
+    if la < 0 then la = la + 360 end
+    local off = goal.Rotation
+    local sStart = (102 + off) % 360
+    local sEnd   = (116 + off) % 360
+    local vL, vS = angleToRay(la), angleToRay(sStart)
+    local sweep = (sEnd - sStart) % 360
+    if sweep > 180 then sweep = sweep - 360 end
+    local d = math.deg(math.atan2(vS.X*vL.Y - vS.Y*vL.X, vS:Dot(vL)))
+    
+    if sweep >= 0 then
+        return d >= -CFG.skillcheck.margin and d <= sweep + CFG.skillcheck.margin
     else
-        Config.ESP_TextSize      = 14
-        Config.ESP_MaxDist       = 900
-        Config.ESP_Interval      = 1/30
-        Config.AIM_FOV           = 180
-        Config.AIM_Smoothing     = 0.35
-        Config.AIM_AutoFire      = false
-        Config.IN_UseRMB         = true
-        Config.MOB_GestureEnabled = false
-        Config.MOB_AutoAim       = false
-    end
-end
-applyPreset(Config.Preset)
-
--- ═══════════════ ESP CORE ═══════════════
-local ESP = {}
-do
-    local entities, indic, seen = {}, {}, {}
-    local lastTick = 0
-
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "MurderESP"
-    gui.ResetOnSpawn = false
-    gui.IgnoreGuiInset = true
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    gui.DisplayOrder = 999
-    gui.Parent = PlayerGui
-    ESP.Gui = gui
-
-    local FONT = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold)
-
-    local function getRoot(m)
-        return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")
-            or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso")
-            or m:FindFirstChild("Head") or m:FindFirstChildWhichIsA("BasePart")
-    end
-
-    local function createESP(model, color)
-        local e = entities[model]
-        if e then
-            e.hl.FillColor = color; e.hl.OutlineColor = color
-            if e.nameLbl then e.nameLbl.TextColor3 = color end
-            return e
-        end
-        local hl = Instance.new("Highlight")
-        hl.Adornee = model
-        hl.FillColor = color; hl.FillTransparency = 0.55
-        hl.OutlineColor = color; hl.OutlineTransparency = 0.1
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Parent = gui
-
-        local root = getRoot(model)
-        local bb, nameLbl, distLbl
-        if root then
-            bb = Instance.new("BillboardGui")
-            bb.Adornee = root
-            bb.Size = UDim2.new(0, 220, 0, 40)
-            bb.StudsOffset = Vector3.new(0, 3, 0)
-            bb.AlwaysOnTop = true
-            bb.MaxDistance = Config.ESP_MaxDist
-            bb.LightInfluence = 0
-            bb.Parent = gui
-
-            nameLbl = Instance.new("TextLabel")
-            nameLbl.BackgroundTransparency = 1
-            nameLbl.Size = UDim2.new(1, 0, 0.5, 0)
-            nameLbl.FontFace = FONT
-            nameLbl.TextSize = Config.ESP_TextSize
-            nameLbl.TextColor3 = color
-            nameLbl.TextStrokeTransparency = 0.5
-            nameLbl.Parent = bb
-
-            distLbl = Instance.new("TextLabel")
-            distLbl.BackgroundTransparency = 1
-            distLbl.Position = UDim2.new(0, 0, 0.5, 0)
-            distLbl.Size = UDim2.new(1, 0, 0.5, 0)
-            distLbl.FontFace = FONT
-            distLbl.TextSize = Config.ESP_TextSize - 2
-            distLbl.TextColor3 = Color3.fromRGB(230, 230, 230)
-            distLbl.TextStrokeTransparency = 0.5
-            distLbl.Parent = bb
-        end
-        e = { hl = hl, bb = bb, nameLbl = nameLbl, distLbl = distLbl }
-        entities[model] = e
-        return e
-    end
-
-    local function destroyESP(m)
-        local e = entities[m]; if not e then return end
-        if e.hl then e.hl:Destroy() end
-        if e.bb then e.bb:Destroy() end
-        entities[m] = nil
-    end
-
-    local function createIndicator(model, color)
-        local i = indic[model]
-        if i then i.frame.BackgroundColor3 = color; return i end
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(0, 26, 0, 26)
-        f.AnchorPoint = Vector2.new(0.5, 0.5)
-        f.BackgroundColor3 = color
-        f.BackgroundTransparency = 0.35
-        f.BorderSizePixel = 0; f.Visible = false; f.ZIndex = 100
-        f.Parent = gui
-        Instance.new("UICorner", f).CornerRadius = UDim.new(1, 0)
-        local s = Instance.new("UIStroke", f)
-        s.Color = Color3.new(1, 1, 1); s.Thickness = 2
-        local a = Instance.new("TextLabel", f)
-        a.BackgroundTransparency = 1; a.Size = UDim2.new(1, 0, 1, 0)
-        a.Text = "▲"; a.TextColor3 = Color3.new(1, 1, 1); a.TextSize = 18
-        a.Font = Enum.Font.GothamBold
-        i = { frame = f, arrow = a }; indic[model] = i
-        return i
-    end
-
-    local function destroyIndicator(m)
-        local i = indic[m]; if not i then return end
-        if i.frame then i.frame:Destroy() end
-        indic[m] = nil
-    end
-
-    local function updateOffscreen(model, root, color)
-        if not Config.ESP_Offscreen then return end
-        local i = createIndicator(model, color)
-        local ss = Camera.ViewportSize
-        local sp, onScreen = Camera:WorldToViewportPoint(root.Position)
-        if onScreen and sp.Z > 0 and sp.X > 0 and sp.X < ss.X and sp.Y > 0 and sp.Y < ss.Y then
-            i.frame.Visible = false; return
-        end
-        local c = ss / 2
-        local dx, dy
-        if sp.Z < 0 then
-            dx = c.X - sp.X; dy = c.Y - sp.Y
-            if math.abs(dx) < 0.1 and math.abs(dy) < 0.1 then dy = 1 end
-        else
-            dx = sp.X - c.X; dy = sp.Y - c.Y
-        end
-        local pad = Config.ESP_PadSize
-        local mx = ss.X / 2 - pad; local my = ss.Y / 2 - pad
-        local sx = dx ~= 0 and (mx / math.abs(dx)) or math.huge
-        local sy = dy ~= 0 and (my / math.abs(dy)) or math.huge
-        local sc = math.min(sx, sy, 1)
-        i.frame.Position = UDim2.fromOffset(c.X + dx * sc, c.Y + dy * sc)
-        i.frame.Visible = true
-        i.arrow.Rotation = math.deg(math.atan2(dy, dx)) + 90
-    end
-
-    local function classifySurvivor(plr)
-        local c = plr.Character; if not c then return nil end
-        if c:GetAttribute("IsCarried") then return "carried" end
-        if c:GetAttribute("IsHooked") then return "hooked" end
-        if CollectionService:HasTag(c, "Knocked") then return "knocked" end
-        if CollectionService:HasTag(c, "Hooked") then return "hooked" end
-        local h = c:FindFirstChildOfClass("Humanoid")
-        if h then
-            if h.Health <= 0 then return "dead" end
-            if h.Health < h.MaxHealth * 0.5 then return "injured" end
-        end
-        return "healthy"
-    end
-
-    local function statusColor(plr)
-        local s = classifySurvivor(plr)
-        if s == "hooked" then return Config.ESP_HookedColor, " [HOOKED]" end
-        if s == "knocked" then return Config.ESP_KnockedColor, " [DOWN]" end
-        if s == "carried" then return Config.ESP_CarriedColor, " [CARRIED]" end
-        if s == "injured" then return Config.ESP_InjuredColor, " [INJ]" end
-        return Config.ESP_SurvivorColor, ""
-    end
-
-    local function processCharacter(plr, color, tag)
-        local char = plr.Character
-        local root = getRoot(char); if not root then return end
-        local e = createESP(char, color)
-        if e.bb then e.bb.MaxDistance = Config.ESP_MaxDist end
-        if e.nameLbl then
-            e.nameLbl.Text = (Config.ESP_ShowName and plr.Name or "") .. (tag or "")
-            e.nameLbl.TextColor3 = color
-            e.nameLbl.TextSize = Config.ESP_TextSize
-        end
-        local dist = (root.Position - Camera.CFrame.Position).Magnitude
-        if e.distLbl then
-            local txt = Config.ESP_ShowDistance and string.format("%dm", math.floor(dist)) or ""
-            if plr.Team and plr.Team.Name == "Killer" and Config.ESP_ShowTR then
-                local tr = char:GetAttribute("TerrorRadius") or plr:GetAttribute("TerrorRadius") or 0
-                if tr > 0 then txt = txt .. string.format(" • TR %dm", math.floor(tr)) end
-            end
-            e.distLbl.Text = txt
-            e.distLbl.TextSize = Config.ESP_TextSize - 2
-        end
-        e.hl.FillColor = color; e.hl.OutlineColor = color
-        seen[char] = true
-        if dist < Config.ESP_MaxDist * 2 then updateOffscreen(char, root, color) end
-    end
-
-    local function processGenerator(gen)
-        local root = getRoot(gen); if not root then return end
-        local prog = gen:GetAttribute("RepairProgress") or 0
-        local done = prog >= 100
-        local color = done and Config.ESP_GenDoneColor or Config.ESP_GenColor
-        local e = createESP(gen, color)
-        if e.bb then e.bb.MaxDistance = Config.ESP_MaxDist end
-        if e.nameLbl then
-            e.nameLbl.Text = "Generator"
-            e.nameLbl.TextColor3 = color
-            e.nameLbl.TextSize = Config.ESP_TextSize
-        end
-        local dist = (root.Position - Camera.CFrame.Position).Magnitude
-        if e.distLbl then
-            local s = done and "✓ DONE" or string.format("%d%%", math.floor(prog))
-            e.distLbl.Text = string.format("%s • %dm", s, math.floor(dist))
-            e.distLbl.TextSize = Config.ESP_TextSize - 2
-        end
-        e.hl.FillColor = color; e.hl.OutlineColor = color
-        seen[gen] = true
-        if dist < Config.ESP_MaxDist * 2 then updateOffscreen(gen, root, color) end
-    end
-
-    function ESP:ClearAll()
-        for m in pairs(entities) do destroyESP(m) end
-        for m in pairs(indic) do destroyIndicator(m) end
-    end
-
-    function ESP:Tick()
-        if not Config.ESP_Enabled then return end
-        local now = os.clock()
-        if now - lastTick < Config.ESP_Interval then return end
-        lastTick = now
-
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr == LP or not plr.Character then continue end
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if not hum or hum.Health <= 0 then continue end
-            local tn = plr.Team and plr.Team.Name or ""
-            if tn == "Killer" and Config.ESP_ShowKiller then
-                processCharacter(plr, Config.ESP_KillerColor, " [KILLER]")
-            elseif tn == "Survivors" and Config.ESP_ShowSurvivor then
-                local c, t = statusColor(plr)
-                processCharacter(plr, c, t)
-            end
-        end
-
-        if Config.ESP_ShowGenerator then
-            for _, gen in ipairs(CollectionService:GetTagged("Generator")) do
-                if gen:IsA("Model") and gen:IsDescendantOf(Workspace) then
-                    processGenerator(gen)
-                end
-            end
-        end
-
-        for m in pairs(entities) do if not seen[m] then destroyESP(m) end end
-        for m in pairs(indic) do if not seen[m] then destroyIndicator(m) end end
-        table.clear(seen)
-    end
-
-    function ESP:Destroy()
-        self:ClearAll(); if gui then gui:Destroy() end
+        return d >= sweep - CFG.skillcheck.margin or d <= CFG.skillcheck.margin
     end
 end
 
-local espConn = RunService.Heartbeat:Connect(function() ESP:Tick() end)
-
--- ═══════════════ AUTO REPAIR CORE ═══════════════
-local AR = {}
-do
-    local RG = RS:WaitForChild("Remotes"):WaitForChild("Generator")
-    local SkillEvent  = RG:WaitForChild("SkillCheckEvent")
-    local ResultEvent = RG:WaitForChild("SkillCheckResultEvent")
-    local Sc = RS.Remotes.KillerPerks.kingscourge
-    local ScourgeStart = Sc:WaitForChild("KingScourgeStart")
-    local ScourgeHit   = Sc:WaitForChild("KingScourgeHit")
-    local ScourgeEnd   = Sc:WaitForChild("KingScourgeEnd")
-
-    local sg = PlayerGui:WaitForChild("SkillCheckPromptGui"):WaitForChild("Check")
-    local line = sg:WaitForChild("Line")
-    local goal = sg:WaitForChild("Goal")
-
-    local active, blockedFail = false, false
-    local genId, pointId = nil, nil
-    local isScourge, remaining = false, 0
-
-    if hookfunction and newcclosure then
-        local old = ResultEvent.FireServer
-        hookfunction(old, newcclosure(function(self, action, ...)
-            if blockedFail and action == "fail" then return end
-            return old(self, action, ...)
-        end))
-    elseif getrawmetatable and setreadonly and newcclosure then
-        local mt = getrawmetatable(game)
-        local oldNC = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            if getnamecallmethod() == "FireServer" and self == ResultEvent and blockedFail then
-                local a = {...}; if a[1] == "fail" then return end
-            end
-            return oldNC(self, ...)
-        end)
-        setreadonly(mt, true)
-    end
-
-    local function norm(d) return d % 360 end
-    local function inSuccess()
-        local l = norm(line.Rotation)
-        local lo = norm(102 + goal.Rotation)
-        local hi = norm(116 + goal.Rotation)
-        if lo <= hi then return l >= lo and l <= hi end
-        return l >= lo or l <= hi
-    end
-    local function nearCenter()
-        local l = norm(line.Rotation)
-        local c = norm(109 + goal.Rotation)
-        return math.abs(((l - c + 180) % 360) - 180) <= Config.AR_CenterTol
-    end
-    local function shouldFire()
-        return Config.AR_PreferCenter and nearCenter() or inSuccess()
-    end
-
-    local function runSkillcheck(g, p)
-        genId, pointId = g, p
-        active, blockedFail = true, true
-        task.wait(0.55)
-        if not active then return end
-        local t0 = os.clock()
-        while active and (os.clock() - t0 < Config.AR_SafetyTimeout) do
-            if shouldFire() then
-                ResultEvent:FireServer("success", 1, genId, pointId)
-                active = false; return
-            end
-            RunService.Heartbeat:Wait()
-        end
-        active = false
-    end
-
-    SkillEvent.OnClientEvent:Connect(function(g, p)
-        if not Config.AR_Enabled then return end
-        task.spawn(runSkillcheck, g, p)
-    end)
-
-    ScourgeStart.OnClientEvent:Connect(function(g, p, hits)
-        if not Config.AR_Enabled then return end
-        genId, pointId = g, p
-        remaining = hits or 1
-        isScourge, active, blockedFail = true, true, true
-        task.spawn(function()
-            task.wait(0.55)
-            local lastG = goal.Rotation; local t0 = os.clock()
-            while isScourge and remaining > 0 and (os.clock() - t0 < Config.AR_SafetyTimeout * (remaining + 1)) do
-                if shouldFire() then
-                    ScourgeHit:FireServer(pointId, "success")
-                    remaining = remaining - 1
-                    if remaining <= 0 then break end
-                    local tw = os.clock()
-                    while goal.Rotation == lastG and (os.clock() - tw) < 2 do RunService.Heartbeat:Wait() end
-                    lastG = goal.Rotation; task.wait(0.1)
-                end
-                RunService.Heartbeat:Wait()
-            end
-            active, isScourge = false, false
-        end)
-    end)
-
-    ScourgeEnd.OnClientEvent:Connect(function(id)
-        if id == pointId then active, isScourge, remaining = false, false, 0 end
-    end)
-
-    function AR.Cancel() active, blockedFail, isScourge, remaining = false, false, false, 0 end
-    function AR.Destroy() AR.Cancel() end
-
-    task.spawn(function()
-        while true do task.wait(1); if not active then blockedFail = false end end
+local function triggerSkillCheck()
+    local now = os.clock()
+    if now - lastFired < CFG.skillcheck.cooldown then return end
+    lastFired = now
+    
+    -- 🔥 ใช้ Space แทน MouseClick เพื่อไม่ให้เดินค้าง
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
     end)
 end
 
--- ═══════════════ AIMBOT CORE ═══════════════
-local Aim = {}
-do
-    local aimHeld = false
-    local lastFire = 0
-
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "MurderAim"
-    gui.ResetOnSpawn = false
-    gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 998
-    gui.Parent = PlayerGui
-    Aim.Gui = gui
-
-    local fovFrame = Instance.new("Frame")
-    fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    fovFrame.Position = UDim2.fromScale(0.5, 0.5)
-    fovFrame.BackgroundTransparency = 1
-    fovFrame.BorderSizePixel = 0
-    fovFrame.Visible = false
-    fovFrame.Parent = gui
-    Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
-    local fovStroke = Instance.new("UIStroke", fovFrame)
-    fovStroke.Thickness = 1.5; fovStroke.Transparency = 0.4
-
-    local tBox = Instance.new("Frame")
-    tBox.AnchorPoint = Vector2.new(0.5, 0.5)
-    tBox.BackgroundTransparency = 1
-    tBox.BorderSizePixel = 0
-    tBox.Visible = false
-    tBox.Parent = gui
-    Instance.new("UICorner", tBox).CornerRadius = UDim.new(0, 4)
-    local tStroke = Instance.new("UIStroke", tBox)
-    tStroke.Thickness = 2; tStroke.Transparency = 0.1
-
-    local line = Instance.new("Frame")
-    line.AnchorPoint = Vector2.new(0, 0.5)
-    line.BackgroundColor3 = Config.AIM_TargetColor
-    line.BackgroundTransparency = 0.4
-    line.BorderSizePixel = 0
-    line.Size = UDim2.new(0, 0, 0, 2)
-    line.Visible = false
-    line.Parent = gui
-
-    local function getKiller()
-        for _, plr in Players:GetPlayers() do
-            if plr == LP then continue end
-            if not plr.Team or plr.Team.Name ~= "Killer" then continue end
-            if not plr.Character then continue end
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if not hum or hum.Health <= 0 then continue end
-            return plr, plr.Character
-        end
+RunService.RenderStepped:Connect(function()
+    if not CFG.skillcheck.enabled then return end
+    if not skillCheck.Visible or not line.Visible then return end
+    if isInSuccessZone() and lastGoalRot ~= goal.Rotation then
+        lastGoalRot = goal.Rotation
+        triggerSkillCheck()
     end
-
-    local function getPart(char)
-        return char:FindFirstChild(Config.AIM_TargetPart)
-            or char:FindFirstChild("Head")
-            or char:FindFirstChild("UpperTorso")
-            or char:FindFirstChild("Torso")
-            or char:FindFirstChild("HumanoidRootPart")
-    end
-
-    local function wallBlocked(targetPos, targetChar)
-        if not Config.AIM_WallCheck then return false end
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {LP.Character or LP, Camera, targetChar}
-        return workspace:Raycast(Camera.CFrame.Position, targetPos - Camera.CFrame.Position, params) ~= nil
-    end
-
-    local function screenDist(targetPos)
-        local sp, onScreen = Camera:WorldToViewportPoint(targetPos)
-        if not onScreen or sp.Z < 0 then return math.huge end
-        local c = Camera.ViewportSize / 2
-        return (Vector2.new(sp.X, sp.Y) - c).Magnitude, sp
-    end
-
-    local function aimAt(targetPos)
-        local targetCF = CFrame.lookAt(Camera.CFrame.Position, targetPos)
-        local s = Config.AIM_Smoothing
-        if s <= 0.001 or s >= 0.999 then
-            Camera.CFrame = targetCF
-        else
-            Camera.CFrame = Camera.CFrame:Lerp(targetCF, s)
-        end
-    end
-
-    local function hasGun()
-        if not LP.Character then return false end
-        local tool = LP.Character:FindFirstChildOfClass("Tool")
-        if not tool then return false end
-        local lower = tool.Name:lower()
-        for kw in Config.AIM_GunKeywords:gmatch("[^,]+") do
-            if lower:find(kw:gsub("%s+", ""):lower(), 1, true) then return true end
-        end
-        return false
-    end
-    Aim.HasGun = hasGun
-
-    function Aim.SetHeld(state) aimHeld = state end
-    function Aim.IsHeld() return aimHeld end
-
-    function Aim.Step()
-        if Config.AIM_Enabled and Config.AIM_ShowFOV then
-            fovFrame.Visible = true
-            fovFrame.Size = UDim2.fromOffset(Config.AIM_FOV * 2, Config.AIM_FOV * 2)
-            fovStroke.Color = Config.AIM_FOVColor
-        else
-            fovFrame.Visible = false
-        end
-
-        tBox.Visible = false
-        line.Visible = false
-
-        if not Config.AIM_Enabled then return end
-
-        -- Determine if aim is "active"
-        local aiming = aimHeld
-        -- Mobile auto-aim: lock on automatically when holding gun
-        if Caps.touch and Config.MOB_AutoAim and hasGun() then
-            aiming = true
-        end
-
-        if Config.AIM_RequireAim and not aiming then return end
-
-        local plr, char = getKiller()
-        if not plr then return end
-        local part = getPart(char)
-        if not part then return end
-
-        local dist, sp = screenDist(part.Position)
-        if dist > Config.AIM_FOV then return end
-        if wallBlocked(part.Position, char) then return end
-
-        aimAt(part.Position)
-
-        if Config.AIM_ShowTarget and sp then
-            tBox.Visible = true
-            tBox.Position = UDim2.fromOffset(sp.X, sp.Y)
-            tBox.Size = UDim2.fromOffset(50, 50)
-            tStroke.Color = Config.AIM_TargetColor
-
-            local c = Camera.ViewportSize / 2
-            local dx = sp.X - c.X
-            local dy = sp.Y - c.Y
-            local len = math.sqrt(dx * dx + dy * dy)
-            if len > 5 then
-                line.Visible = true
-                line.Position = UDim2.fromOffset(c.X, c.Y)
-                line.Size = UDim2.new(0, len, 0, 2)
-                line.Rotation = math.deg(math.atan2(dy, dx))
-            end
-        end
-
-        if Config.AIM_AutoFire and hasGun() then
-            if os.clock() - lastFire >= Config.AIM_FireCooldown then
-                local tool = LP.Character:FindFirstChildOfClass("Tool")
-                if tool then
-                    pcall(function() tool:Activate() end)
-                    lastFire = os.clock()
-                end
-            end
-        end
-    end
-
-    function Aim.Fire()
-        if not LP.Character then return end
-        local tool = LP.Character:FindFirstChildOfClass("Tool")
-        if tool then pcall(function() tool:Activate() end) end
-    end
-
-    function Aim.Destroy() if gui then gui:Destroy() end end
-end
-
-RunService:BindToRenderStep("MurderAimLock", Enum.RenderPriority.Camera.Value + 1, function()
-    Aim.Step()
 end)
 
--- ═══════════════ MOBILE GESTURES ═══════════════
--- ไม่มีปุ่มบนจอ — ใช้ multi-finger gesture
-local Gesture = {}
-do
-    local fingers = {}        -- [input] = { t = tick(), gesture = bool }
-    local aimActive = false
-    local lastFireGesture = 0
-    local lastEspGesture = 0
-    local lastAimToggleGesture = 0
-    local FIRE_COOLDOWN = 0.5
-    local ESP_COOLDOWN = 0.5
-    local AIM_TOGGLE_COOLDOWN = 0.5
+-- ═══ 4. ESP SYSTEM (Killer & Survivor) ═════════════════════════
+local kTracked, sTracked = {}, {}
 
-    local function log(...)
-        if Config.MOB_Debug then
-            print("[Gesture]", ...)
+local function createESP(m, isK)
+    local e = {}
+    local cNear = isK and CFG.espKiller.colorNear or CFG.espSurv.colorNear
+    local hl = Instance.new("Highlight")
+    hl.Name = isK and "ESP_Killer" or "ESP_Survivor"
+    hl.Adornee = m
+    hl.FillColor = cNear
+    hl.OutlineColor = cNear
+    hl.FillTransparency = 0.55
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = m
+    e.hl = hl
+    
+    local root = getRoot(m)
+    if root then
+        local bb = Instance.new("BillboardGui")
+        bb.Size = UDim2.new(0, 160, 0, isK and 36 or 50)
+        bb.Adornee = root
+        bb.StudsOffset = Vector3.new(0, 3.2, 0)
+        bb.AlwaysOnTop = true
+        bb.MaxDistance = isK and CFG.espKiller.maxDist or CFG.espSurv.maxDist
+        bb.Parent = root
+        
+        local n = Instance.new("TextLabel")
+        n.Name = "N"
+        n.Size = UDim2.new(1, 0, 0, 18)
+        n.BackgroundTransparency = 1
+        n.Text = "?"
+        n.TextColor3 = Color3.new(1,1,1)
+        n.TextStrokeTransparency = 0
+        n.Font = Enum.Font.GothamBold
+        n.TextScaled = true
+        n.Parent = bb
+        
+        local i = Instance.new("TextLabel")
+        i.Name = "I"
+        i.Size = UDim2.new(1, 0, 0, 14)
+        i.Position = UDim2.new(0, 0, 0, 18)
+        i.BackgroundTransparency = 1
+        i.Text = ""
+        i.TextColor3 = isK and Color3.fromRGB(255,220,120) or Color3.fromRGB(200,255,200)
+        i.TextStrokeTransparency = 0
+        i.Font = Enum.Font.Gotham
+        i.TextScaled = true
+        i.Parent = bb
+        
+        if not isK then
+            local s = Instance.new("TextLabel")
+            s.Name = "S"
+            s.Size = UDim2.new(1, 0, 0, 14)
+            s.Position = UDim2.new(0, 0, 0, 32)
+            s.BackgroundTransparency = 1
+            s.Text = ""
+            s.TextColor3 = Color3.fromRGB(255, 200, 60)
+            s.TextStrokeTransparency = 0
+            s.Font = Enum.Font.GothamBold
+            s.TextScaled = true
+            s.Parent = bb
         end
+        e.bb = bb
     end
+    return e
+end
 
-    -- ตรวจว่าจุดนั้นอยู่นอกโซนควบคุมของเกมไหม
-    -- (โซนซ้ายล่าง = joystick, โซนขวาล่าง = action buttons)
-    local function inGestureZone(pos)
-        local vp = Camera.ViewportSize
-        local cw = vp.X * Config.MOB_ControlZoneW
-        local ch = vp.Y * Config.MOB_ControlZoneH
-        -- โซนซ้ายล่าง
-        if pos.X < cw and pos.Y > vp.Y - ch then return false end
-        -- โซนขวาล่าง
-        if pos.X > vp.X - cw and pos.Y > vp.Y - ch then return false end
-        return true
-    end
+local function removeESP(m, isK)
+    local tab = isK and kTracked or sTracked
+    local e = tab[m]
+    if not e then return end
+    if e.hl then e.hl:Destroy() end
+    if e.bb then e.bb:Destroy() end
+    tab[m] = nil
+end
 
-    local function countActive()
-        local n = 0
-        for _ in pairs(fingers) do n = n + 1 end
-        return n
-    end
-
-    local function countRecentGesture()
-        local now = tick()
-        local n = 0
-        for _, info in pairs(fingers) do
-            if info.gesture and now - info.t <= Config.MOB_GestureWindow then
-                n = n + 1
+task.spawn(function()
+    while true do
+        local myChar = player.Character
+        local myP = Players:GetPlayerFromCharacter(myChar)
+        local iAmKiller = myP and myP.Team and myP.Team.Name == "Killer"
+        
+        if CFG.espKiller.enabled then
+            local seen = {}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character and isKiller(p.Character) then
+                    seen[p.Character] = true
+                    if not kTracked[p.Character] then kTracked[p.Character] = createESP(p.Character, true) end
+                end
+            end
+            for m in pairs(kTracked) do
+                if not seen[m] or not m:IsDescendantOf(Workspace) or not isKiller(m) then removeESP(m, true) end
             end
         end
-        return n
-    end
-
-    local function countActiveGesture()
-        local n = 0
-        for _, info in pairs(fingers) do
-            if info.gesture then n = n + 1 end
+        
+        if CFG.espSurv.enabled and iAmKiller then
+            local seen = {}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character and isSurvivor(p.Character) then
+                    seen[p.Character] = true
+                    if not sTracked[p.Character] then sTracked[p.Character] = createESP(p.Character, false) end
+                end
+            end
+            for m in pairs(sTracked) do
+                if not seen[m] or not m:IsDescendantOf(Workspace) or not isSurvivor(m) then removeESP(m, false) end
+            end
+        elseif not iAmKiller then
+            for m in pairs(sTracked) do removeESP(m, false) end
         end
-        return n
+        task.wait(0.5)
     end
+end)
 
-    if not Caps.touch then
-        -- ไม่มี touch → gesture system ปิดตัวเงียบๆ
-        function Gesture.Init() end
-        function Gesture.Destroy() end
+RunService.RenderStepped:Connect(function()
+    local myChar = player.Character
+    if not myChar then return end
+    local myRoot = getRoot(myChar)
+    if not myRoot then return end
+    
+    for m, e in pairs(kTracked) do
+        if CFG.espKiller.enabled and e.bb then
+            local root = getRoot(m)
+            if root then
+                local h = m:FindFirstChildOfClass("Humanoid")
+                local d = (root.Position - myRoot.Position).Magnitude
+                local t = math.clamp(d / CFG.espKiller.maxDist, 0, 1)
+                local col = lerpColor(CFG.espKiller.colorNear, CFG.espKiller.colorFar, t)
+                e.hl.FillColor, e.hl.OutlineColor = col, col
+                
+                local n, i = e.bb:FindFirstChild("N"), e.bb:FindFirstChild("I")
+                if n then n.Text = m.Name; n.TextColor3 = col end
+                if i and h then i.Text = string.format("%dm • %dHP", math.floor(d), math.floor(h.Health)) end
+            end
+        end
+    end
+    
+    for m, e in pairs(sTracked) do
+        if CFG.espSurv.enabled and e.bb then
+            local root = getRoot(m)
+            if root then
+                local h = m:FindFirstChildOfClass("Humanoid")
+                local d = (root.Position - myRoot.Position).Magnitude
+                local t = math.clamp(d / CFG.espSurv.maxDist, 0, 1)
+                local col = lerpColor(CFG.espSurv.colorNear, CFG.espSurv.colorFar, t)
+                e.hl.FillColor, e.hl.OutlineColor = col, col
+                
+                local n, i, s = e.bb:FindFirstChild("N"), e.bb:FindFirstChild("I"), e.bb:FindFirstChild("S")
+                if n then n.Text = m.Name; n.TextColor3 = col end
+                if i and h then i.Text = string.format("%dm • %dHP", math.floor(d), math.floor(h.Health)) end
+                if s then
+                    if m:GetAttribute("IsCarried") then s.Text = "🫳 CARRIED"; s.TextColor3 = Color3.fromRGB(255,80,80)
+                    elseif m:GetAttribute("IsHooked") then s.Text = "🪝 HOOKED"; s.TextColor3 = Color3.fromRGB(255,100,200)
+                    elseif h and h.Health <= 0 then s.Text = "💀 DEAD"; s.TextColor3 = Color3.fromRGB(150,150,150)
+                    elseif h and h.Health < h.MaxHealth * 0.5 then s.Text = "🩸 INJURED"; s.TextColor3 = Color3.fromRGB(255,150,60)
+                    else s.Text = "🏃 RUNNING"; s.TextColor3 = Color3.fromRGB(150,255,150)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ═══ 5. AIMBOT ═════════════════════════════════════════════════
+local lastAimFire = 0
+
+local function getAimPos(m)
+    if CFG.aimbot.aimPart == "Head" then
+        local h = m:FindFirstChild("Head"); return h and h.Position
+    elseif CFG.aimbot.aimPart == "Torso" then
+        local t = m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso"); return t and t.Position
+    else
+        local h = m:FindFirstChild("Head") or m:FindFirstChild("HumanoidRootPart"); return h and h.Position
+    end
+end
+
+local function isVisible(target, pos)
+    local cp = camera.CFrame.Position
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances = { player.Character, camera }
+    local hit = Workspace:Raycast(cp, pos - cp, rp)
+    return (not hit) or hit.Instance:IsDescendantOf(target)
+end
+
+local function findBestTarget()
+    local cp, cl = camera.CFrame.Position, camera.CFrame.LookVector
+    local maxA = math.rad(CFG.aimbot.fov / 2)
+    local best, bestPos, bestD = nil, nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == player then continue end
+        local c = p.Character
+        if not isKiller(c) then continue end
+        local ap = getAimPos(c)
+        if not ap then continue end
+        local d = ap - cp
+        local dist = d.Magnitude
+        if dist > CFG.aimbot.maxDist then continue end
+        local ang = math.acos(math.clamp(cl:Dot(d.Unit), -1, 1))
+        if ang > maxA then continue end
+        if CFG.aimbot.visibleOnly and not isVisible(c, ap) then continue end
+        if dist < bestD then best, bestPos, bestD = c, ap, dist end
+    end
+    return best, bestPos
+end
+
+local function fireGun()
+    local char = player.Character
+    if not char then return end
+    local tool = char:FindFirstChildOfClass("Tool")
+    -- 🔥 ใช้ tool:Activate() แทนการคลิกหน้าจอ เพื่อไม่ให้เดินค้าง
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+    if not CFG.aimbot.enabled then return end
+
+    if CFG.aimbot.mode == "trigger" then
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = { player.Character, camera }
+        local hit = Workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * CFG.aimbot.maxDist, rp)
+        if hit then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character and isKiller(p.Character) and hit.Instance:IsDescendantOf(p.Character) then
+                    if CFG.aimbot.autoFire then
+                        local now = os.clock()
+                        if now - lastAimFire > CFG.aimbot.fireCooldown then lastAimFire = now; fireGun() end
+                    end
+                    break
+                end
+            end
+        end
         return
     end
 
-    local conns = {}
+    local holding = CFG.aimbot.holding or UserInputService:IsKeyDown(Enum.KeyCode.C)
+    if not holding then return end
 
-    table.insert(conns, UIS.TouchStarted:Connect(function(input)
-        local pos = Vector3.new(input.Position.X, input.Position.Y, 0)
-        local eligible = inGestureZone(Vector2.new(input.Position.X, input.Position.Y))
-        fingers[input] = { t = tick(), gesture = eligible, pos = input.Position }
-
-        if not Config.MOB_GestureEnabled then return end
-
-        local recent = countRecentGesture()
-
-        if recent == 2 and not aimActive then
-            aimActive = true
-            Aim.SetHeld(true)
-            log("AIM START (2-finger hold)")
-        elseif recent == 3 then
-            if tick() - lastFireGesture >= FIRE_COOLDOWN then
-                lastFireGesture = tick()
-                if Config.AIM_Enabled then
-                    Aim.Fire()
-                    log("FIRE (3-finger tap)")
-                end
-            end
-        elseif recent == 4 then
-            if tick() - lastEspGesture >= ESP_COOLDOWN then
-                lastEspGesture = tick()
-                Config.ESP_Enabled = not Config.ESP_Enabled
-                if not Config.ESP_Enabled then ESP:ClearAll() end
-                log("ESP TOGGLE →", Config.ESP_Enabled)
-                if _G._MurderSuite and _G._MurderSuite.syncUI then
-                    _G._MurderSuite.syncUI("ESP_Enabled", Config.ESP_Enabled)
-                end
-            end
-        elseif recent == 5 then
-            if tick() - lastAimToggleGesture >= AIM_TOGGLE_COOLDOWN then
-                lastAimToggleGesture = tick()
-                Config.AIM_Enabled = not Config.AIM_Enabled
-                log("AIMBOT TOGGLE →", Config.AIM_Enabled)
-                if _G._MurderSuite and _G._MurderSuite.syncUI then
-                    _G._MurderSuite.syncUI("AIM_Enabled", Config.AIM_Enabled)
-                end
-            end
-        end
-    end))
-
-    table.insert(conns, UIS.TouchEnded:Connect(function(input)
-        fingers[input] = nil
-        if aimActive and countActiveGesture() < 2 then
-            aimActive = false
-            Aim.SetHeld(false)
-            log("AIM END")
-        end
-    end))
-
-    -- Safety: ถ้า touch หายหมด (เช่นสลับแอป) → reset
-    table.insert(conns, UIS.WindowFocusReleased:Connect(function()
-        fingers = {}
-        if aimActive then
-            aimActive = false
-            Aim.SetHeld(false)
-        end
-    end))
-
-    function Gesture.Destroy()
-        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    local t, pos = findBestTarget()
+    if not t then return end
+    local cp = camera.CFrame.Position
+    local desired = CFrame.new(cp, pos)
+    
+    if CFG.aimbot.mode == "rage" then
+        camera.CFrame = desired
+    else
+        camera.CFrame = camera.CFrame:Lerp(desired, math.clamp(dt * 20, 0, 1))
     end
-end
-
--- ═══════════════ PC / CONSOLE INPUT ═══════════════
-local inputConns = {}
-
-local function isAimBegin(input)
-    if Config.IN_UseRMB and input.UserInputType == Enum.UserInputType.MouseButton2 then return true end
-    if input.KeyCode == Config.IN_KbAimKey then return true end
-    if Config.IN_UseL2 and input.KeyCode == Enum.KeyCode.ButtonL2 then return true end
-    return false
-end
-
-table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if isAimBegin(input) then Aim.SetHeld(true) end
-end))
-table.insert(inputConns, UIS.InputEnded:Connect(function(input, gp)
-    if isAimBegin(input) then Aim.SetHeld(false) end
-end))
-table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Config.IN_EspToggleKey then
-        Config.ESP_Enabled = not Config.ESP_Enabled
-        if not Config.ESP_Enabled then ESP:ClearAll() end
-        if _G._MurderSuite and _G._MurderSuite.syncUI then
-            _G._MurderSuite.syncUI("ESP_Enabled", Config.ESP_Enabled)
+    
+    if CFG.aimbot.autoFire then
+        local look = camera.CFrame.LookVector
+        local dir = (pos - cp).Unit
+        if look:Dot(dir) > CFG.aimbot.aimThreshold then
+            local now = os.clock()
+            if now - lastAimFire > CFG.aimbot.fireCooldown then lastAimFire = now; fireGun() end
         end
     end
-end))
-table.insert(inputConns, UIS.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Config.IN_FireKey
-    or (Config.IN_UseR2 and input.KeyCode == Enum.KeyCode.ButtonR2) then
-        if Config.AIM_Enabled and not Config.AIM_AutoFire then
-            Aim.Fire()
-        end
+end)
+
+-- ═══ 6. PC KEYBOARD SHORTCUTS ══════════════════════════════════
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        CFG.aimbot.enabled = not CFG.aimbot.enabled
+        print("[Aim] " .. (CFG.aimbot.enabled and "ON" or "OFF"))
+    elseif input.KeyCode == Enum.KeyCode.RightControl then
+        CFG.espKiller.enabled = not CFG.espKiller.enabled
+        if not CFG.espKiller.enabled then for m in pairs(kTracked) do removeESP(m, true) end end
+        print("[ESP Killer] " .. (CFG.espKiller.enabled and "ON" or "OFF"))
+    elseif input.KeyCode == Enum.KeyCode.RightAlt then
+        CFG.espSurv.enabled = not CFG.espSurv.enabled
+        if not CFG.espSurv.enabled then for m in pairs(sTracked) do removeESP(m, false) end end
+        print("[ESP Surv] " .. (CFG.espSurv.enabled and "ON" or "OFF"))
     end
-end))
+end)
 
--- ═══════════════ RAYFIELD UI ═══════════════
-local Window = Rayfield:CreateWindow({
-    Name = "Murder Game Suite v5",
-    LoadingTitle = "Murder Game Suite",
-    LoadingSubtitle = "Gesture Edition (no HUD buttons)",
-    Theme = "Amethyst",
-    KeySystem = false,
-    ConfigurationSaving = { Enabled = false },
-})
-
-local SyncUI = {}
-local function regToggle(flag, obj)
-    SyncUI[flag] = SyncUI[flag] or {}
-    table.insert(SyncUI[flag], obj)
-end
-
--- ─── Auto Repair ───
-local TabAR = Window:CreateTab("Auto Repair", 4483362458)
-local arT = TabAR:CreateToggle({
-    Name = "Enable Auto Repair", CurrentValue = Config.AR_Enabled, Flag = "AR_Enabled",
-    Callback = function(s) Config.AR_Enabled = s; if not s then AR.Cancel() end end,
-})
-regToggle("AR_Enabled", arT)
-TabAR:CreateToggle({
-    Name = "Prefer Center", CurrentValue = Config.AR_PreferCenter,
-    Flag = "AR_PreferCenter",
-    Callback = function(v) Config.AR_PreferCenter = v end,
-})
-TabAR:CreateSlider({
-    Name = "Center Tolerance", Range = {0, 7}, Increment = 0.5, Suffix = "°",
-    CurrentValue = Config.AR_CenterTol, Flag = "AR_CenterTol",
-    Callback = function(v) Config.AR_CenterTol = v end,
-})
-
--- ─── ESP ───
-local TabESP = Window:CreateTab("ESP", 4483362458)
-local espT = TabESP:CreateToggle({
-    Name = "Enable ESP", CurrentValue = Config.ESP_Enabled, Flag = "ESP_Enabled",
-    Callback = function(s) Config.ESP_Enabled = s; if not s then ESP:ClearAll() end end,
-})
-regToggle("ESP_Enabled", espT)
-TabESP:CreateToggle({ Name = "Show Killer", CurrentValue = true, Flag = "ESP_ShowKiller", Callback = function(v) Config.ESP_ShowKiller = v end })
-TabESP:CreateToggle({ Name = "Show Survivors", CurrentValue = true, Flag = "ESP_ShowSurvivor", Callback = function(v) Config.ESP_ShowSurvivor = v end })
-TabESP:CreateToggle({ Name = "Show Generators", CurrentValue = true, Flag = "ESP_ShowGenerator", Callback = function(v) Config.ESP_ShowGenerator = v end })
-TabESP:CreateToggle({ Name = "Offscreen Indicators", CurrentValue = true, Flag = "ESP_Offscreen", Callback = function(v) Config.ESP_Offscreen = v end })
-TabESP:CreateSlider({ Name = "Max Distance", Range = {100, 3000}, Increment = 50, Suffix = "m", CurrentValue = Config.ESP_MaxDist, Flag = "ESP_MaxDist", Callback = function(v) Config.ESP_MaxDist = v end })
-TabESP:CreateSlider({ Name = "Update FPS", Range = {10, 60}, Increment = 5, Suffix = " fps", CurrentValue = math.floor(1/Config.ESP_Interval), Flag = "ESP_FPS", Callback = function(v) Config.ESP_Interval = 1 / v end })
-
--- ─── Aimbot ───
-local TabAim = Window:CreateTab("Aimbot", 4483362458)
-local aimT = TabAim:CreateToggle({
-    Name = "Enable Aimbot", CurrentValue = Config.AIM_Enabled, Flag = "AIM_Enabled",
-    Callback = function(s) Config.AIM_Enabled = s end,
-})
-regToggle("AIM_Enabled", aimT)
-TabAim:CreateToggle({
-    Name = "Require Aim Input", CurrentValue = Config.AIM_RequireAim, Flag = "AIM_RequireAim",
-    Callback = function(s) Config.AIM_RequireAim = s end,
-})
-TabAim:CreateToggle({
-    Name = "Use Right Mouse (PC)", CurrentValue = Config.IN_UseRMB, Flag = "IN_UseRMB",
-    Callback = function(s) Config.IN_UseRMB = s end,
-})
-TabAim:CreateToggle({
-    Name = "Use L2 (Gamepad)", CurrentValue = Config.IN_UseL2, Flag = "IN_UseL2",
-    Callback = function(s) Config.IN_UseL2 = s end,
-})
-TabAim:CreateKeybind({
-    Name = "Aim Key (Keyboard)", CurrentValue = Config.IN_KbAimKey.Name, Flag = "IN_KbAimKey",
-    Callback = function(k) local kc = Enum.KeyCode[k]; if kc then Config.IN_KbAimKey = kc end end,
-})
-TabAim:CreateDropdown({
-    Name = "Target Part",
-    Options = {"Head", "UpperTorso", "Torso", "HumanoidRootPart"},
-    CurrentOption = {Config.AIM_TargetPart}, Flag = "AIM_TargetPart",
-    Callback = function(o) Config.AIM_TargetPart = o[1] or o end,
-})
-TabAim:CreateSlider({ Name = "FOV Radius", Range = {50, 500}, Increment = 10, Suffix = " px", CurrentValue = Config.AIM_FOV, Flag = "AIM_FOV", Callback = function(v) Config.AIM_FOV = v end })
-TabAim:CreateSlider({ Name = "Smoothing", Range = {0, 0.95}, Increment = 0.05, CurrentValue = Config.AIM_Smoothing, Flag = "AIM_Smoothing", Callback = function(v) Config.AIM_Smoothing = v end })
-TabAim:CreateToggle({ Name = "Auto Fire", CurrentValue = Config.AIM_AutoFire, Flag = "AIM_AutoFire", Callback = function(v) Config.AIM_AutoFire = v end })
-TabAim:CreateSlider({ Name = "Fire Cooldown", Range = {0.1, 3}, Increment = 0.1, Suffix = "s", CurrentValue = Config.AIM_FireCooldown, Flag = "AIM_FireCooldown", Callback = function(v) Config.AIM_FireCooldown = v end })
-
--- ─── Mobile Gestures (แสดงเฉพาะเมื่อมี touch) ───
-if Caps.touch then
-    local TabMob = Window:CreateTab("Mobile Gestures", 4483362458)
-    TabMob:CreateSection("Gesture Mode")
-    TabMob:CreateToggle({
-        Name = "Enable Gestures",
-        CurrentValue = Config.MOB_GestureEnabled, Flag = "MOB_GestureEnabled",
-        Callback = function(v)
-            Config.MOB_GestureEnabled = v
-            if not v then Aim.SetHeld(false) end
-        end,
-    })
-    TabMob:CreateToggle({
-        Name = "Auto-Aim (hold gun → lock on)",
-        CurrentValue = Config.MOB_AutoAim, Flag = "MOB_AutoAim",
-        Callback = function(v) Config.MOB_AutoAim = v end,
-    })
-
-    TabMob:CreateSection("Info")
-    TabMob:CreateParagraph({
-        Title = "How to use",
-        Content = "2-finger hold = Aim (center screen)\n3-finger tap = Fire\n4-finger tap = Toggle ESP\n5-finger tap = Toggle Aimbot\n\nFingers must be outside joystick/action zones (bottom corners).",
-    })
-
-    TabMob:CreateSection("Tuning")
-    TabMob:CreateSlider({
-        Name = "Gesture Window",
-        Range = {0.05, 0.5}, Increment = 0.05, Suffix = "s",
-        CurrentValue = Config.MOB_GestureWindow, Flag = "MOB_GestureWindow",
-        Callback = function(v) Config.MOB_GestureWindow = v end,
-    })
-    TabMob:CreateSlider({
-        Name = "Control Zone Width",
-        Range = {0, 0.5}, Increment = 0.05,
-        CurrentValue = Config.MOB_ControlZoneW, Flag = "MOB_ControlZoneW",
-        Callback = function(v) Config.MOB_ControlZoneW = v end,
-    })
-    TabMob:CreateSlider({
-        Name = "Control Zone Height",
-        Range = {0, 0.7}, Increment = 0.05,
-        CurrentValue = Config.MOB_ControlZoneH, Flag = "MOB_ControlZoneH",
-        Callback = function(v) Config.MOB_ControlZoneH = v end,
-    })
-    TabMob:CreateToggle({
-        Name = "Debug Print", CurrentValue = Config.MOB_Debug, Flag = "MOB_Debug",
-        Callback = function(v) Config.MOB_Debug = v end,
-    })
-end
-
--- ─── Preset ───
-local TabPreset = Window:CreateTab("Preset", 4483362458)
-TabPreset:CreateButton({
-    Name = "Apply: PC", Callback = function()
-        applyPreset("pc")
-        Rayfield:Notify({Title = "Preset", Content = "PC applied", Duration = 3})
-    end,
-})
-TabPreset:CreateButton({
-    Name = "Apply: Mobile (gesture)", Callback = function()
-        applyPreset("mobile")
-        Rayfield:Notify({Title = "Preset", Content = "Mobile gesture applied", Duration = 3})
-    end,
-})
-TabPreset:CreateButton({
-    Name = "Apply: Auto (" .. Caps.primary .. ")", Callback = function()
-        applyPreset("auto")
-        Rayfield:Notify({Title = "Preset", Content = "Auto applied", Duration = 3})
-    end,
-})
-
--- ─── Settings ───
-local TabSet = Window:CreateTab("Settings", 4483362458)
-TabSet:CreateButton({ Name = "Clear ESP", Callback = function() ESP:ClearAll() end })
-TabSet:CreateButton({ Name = "Unload Suite", Callback = function() if _G._MurderSuite then _G._MurderSuite.cleanup() end end })
-
--- ═══════════════ PUBLIC API ═══════════════
-_G._MurderSuite = {
-    Config = Config,
-    Caps = Caps,
-    ESP = ESP,
-    AR = AR,
-    Aim = Aim,
-    syncUI = function(flag, state)
-        Config[flag] = state
-        local list = SyncUI[flag]
-        if not list then return end
-        for _, obj in ipairs(list) do
-            pcall(function() obj:Set(state) end)
-        end
-    end,
-    cleanup = function()
-        for _, c in ipairs(inputConns) do pcall(function() c:Disconnect() end) end
-        if espConn then espConn:Disconnect() end
-        pcall(function() Gesture.Destroy() end)
-        pcall(function() RunService:UnbindFromRenderStep("MurderAimLock") end)
-        pcall(function() ESP:Destroy() end)
-        pcall(function() AR.Destroy() end)
-        pcall(function() Aim.Destroy() end)
-        pcall(function() Rayfield:Destroy() end)
-        _G._MurderSuite = nil
-    end,
-}
-
-Rayfield:Notify({
-    Title = "Murder Suite v5 — Gesture Edition",
-    Content = Caps.touch
-        and "2-finger=Aim | 3-finger=Fire | 4-finger=ESP | 5-finger=Aimbot"
-        or "PC mode: RMB/E=Aim | F=Fire | RightShift=ESP",
-    Duration = 8,
-})
+print("[AutoHelper] 🚀 Bug Fixed: Movement & Repairing should work normally.")
