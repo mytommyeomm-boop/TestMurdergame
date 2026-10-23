@@ -1,404 +1,465 @@
---[[ ═══════════════════════════════════════════════════════════════
-    ULTIMATE AUTO-HELPER (Bug Fix: No UI, No Stuck)
-    Features: 
-    - Auto Skill Check (Ray UI Angular Raycast 100% Perfect)
-    - Killer ESP (Highlight + Billboard)
-    - Survivor ESP (Highlight + Billboard + Status)
-    - Aimbot (Rage / Assist / Trigger)
-═══════════════════════════════════════════════════════════════ ]]
+-- ============================================================
+--  MURDER GAME HELPER – v2 (fixed)
+--  Auto Repair + Killer ESP + Killer-Only Aim Assist
+-- ============================================================
 
-local Players             = game:GetService("Players")
-local RunService          = game:GetService("RunService")
-local UserInputService    = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local CollectionService   = game:GetService("CollectionService")
-local Workspace           = game:GetService("Workspace")
+-- [[ SERVICES ]]
+local Players            = game:GetService("Players")
+local RunService         = game:GetService("RunService")
+local CollectionService  = game:GetService("CollectionService")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local VirtualInputManager= game:GetService("VirtualInputManager")
 
-local player = Players.LocalPlayer
-local camera = Workspace.CurrentCamera
-local pg     = player:WaitForChild("PlayerGui")
+local LP     = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
--- ═══ 1. CONFIGURATION (แก้ตรงนี้ถ้าเล่นมือถือ) ══════════════════
-local CFG = {
-    skillcheck = { enabled = true, margin = 2.5, cooldown = 0.1 },
-    
-    espKiller  = { enabled = true, maxDist = 500, colorNear = Color3.fromRGB(255, 40, 40), colorFar = Color3.fromRGB(255, 150, 150) },
-    espSurv    = { enabled = true, maxDist = 500, colorNear = Color3.fromRGB(60, 255, 120), colorFar = Color3.fromRGB(60, 180, 255) },
-    
-    aimbot = {
-        enabled       = false,     -- เปิด/ปิด Aimbot (แนะนำ true สำหรับมือถือ)
-        mode          = "trigger", -- "trigger" = ยิงทันทีเมื่อเล็งโดน (ไม่ต้องกดค้าง)
-        fov           = 90,
-        maxDist       = 500,
-        aimPart       = "Head",
-        autoFire      = true,
-        fireCooldown  = 0.08,
-        aimThreshold  = 0.999,
-        visibleOnly   = true,
-        holding       = false,
-    },
+-- [[ CONFIG ]]
+local TEAM_KILLER       = "Killer"
+local TAG_KILLER        = "Killer"
+local GUN_NAME_PATTERNS = {
+    "gun","pistol","rifle","shotgun","smg","sniper",
+    "revolver","glock","beretta","magnum","ak","m4","colt"
 }
 
--- ═══ 2. UTILITIES ══════════════════════════════════════════════
-local function isKiller(m)
-    if not (m and m:IsA("Model")) then return false end
-    local h = m:FindFirstChildOfClass("Humanoid")
-    if not h or h.Health <= 0 then return false end
-    local p = Players:GetPlayerFromCharacter(m)
-    if p and p.Team and p.Team.Name == "Killer" then return true end
-    return CollectionService:HasTag(m, "Killer")
+local State = {
+    AimSmoothness   = 0.15,
+    AimFOV          = 90,
+    AimRequireGun   = true,
+}
+
+-- ============================================================
+--  HELPERS
+-- ============================================================
+local function isKillerPlayer(player)
+    if not player then return false end
+    if player.Team and player.Team.Name == TEAM_KILLER then return true end
+    local char = player.Character
+    if char and CollectionService:HasTag(char, TAG_KILLER) then return true end
+    if CollectionService:HasTag(player, TAG_KILLER) then return true end
+    return false
 end
 
-local function isSurvivor(m)
-    if not (m and m:IsA("Model")) then return false end
-    local h = m:FindFirstChildOfClass("Humanoid")
-    if not h or h.Health <= 0 then return false end
-    local p = Players:GetPlayerFromCharacter(m)
-    if p and p.Team and p.Team.Name == "Survivors" then return true end
-    return CollectionService:HasTag(m, "Survivors")
+local function findGunTool()
+    local char = LP.Character
+    if not char then return nil end
+    -- Prefer tools that look like guns
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name:lower()
+            for _, pat in ipairs(GUN_NAME_PATTERNS) do
+                if n:find(pat) then return tool end
+            end
+        end
+    end
+    -- If user disabled the "require gun" option, any tool counts
+    if not State.AimRequireGun then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then return tool end
+        end
+    end
+    return nil
 end
 
-local function getRoot(m)
-    return m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso")
+local function getTargetPart(character)
+    return character:FindFirstChild("Head")
+        or character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+        or character:FindFirstChild("HumanoidRootPart")
 end
 
-local function lerpColor(c1, c2, t)
-    return Color3.new(
-        c1.R + (c2.R - c1.R) * t,
-        c1.G + (c2.G - c1.G) * t,
-        c1.B + (c2.B - c1.B) * t
-    )
+local function notify(title, text)
+    if Rayfield then
+        pcall(function()
+            Rayfield:Notify({Title = title, Content = text, Duration = 2})
+        end)
+    end
+    print(("[MG] %s – %s"):format(title, text))
 end
 
--- ═══ 3. SKILL CHECK (Ray UI Angular) ═══════════════════════════
-local skillGui   = pg:WaitForChild("SkillCheckPromptGui")
-local skillCheck = skillGui:WaitForChild("Check")
-local line       = skillCheck:WaitForChild("Line")
-local goal       = skillCheck:WaitForChild("Goal")
-local lastGoalRot, lastFired = nil, 0
+-- ============================================================
+--  AUTO REPAIR
+--  Success window in game code:  102 <= (Line.Rotation - Goal.Rotation) <= 116
+-- ============================================================
+local AutoRepair = {
+    Active   = false,
+    Fired    = false,
+    SkillGui = nil,
+    Line     = nil,
+    Goal     = nil,
+    Conns    = {},
+}
 
-local function angleToRay(deg)
-    local r = math.rad(deg)
-    return Vector2.new(math.cos(r), math.sin(r))
+local function addARConn(c) table.insert(AutoRepair.Conns, c) return c end
+
+local function disconnectAR()
+    for _, c in ipairs(AutoRepair.Conns) do
+        pcall(function() c:Disconnect() end)
+    end
+    table.clear(AutoRepair.Conns)
 end
 
-local function isInSuccessZone()
-    local la = line.Rotation % 360
-    if la < 0 then la = la + 360 end
-    local off = goal.Rotation
-    local sStart = (102 + off) % 360
-    local sEnd   = (116 + off) % 360
-    local vL, vS = angleToRay(la), angleToRay(sStart)
-    local sweep = (sEnd - sStart) % 360
-    if sweep > 180 then sweep = sweep - 360 end
-    local d = math.deg(math.atan2(vS.X*vL.Y - vS.Y*vL.X, vS:Dot(vL)))
-    
-    if sweep >= 0 then
-        return d >= -CFG.skillcheck.margin and d <= sweep + CFG.skillcheck.margin
-    else
-        return d >= sweep - CFG.skillcheck.margin or d <= CFG.skillcheck.margin
+local function ensureSkillGui()
+    if AutoRepair.SkillGui and AutoRepair.SkillGui.Parent
+       and AutoRepair.Line and AutoRepair.Line.Parent
+       and AutoRepair.Goal and AutoRepair.Goal.Parent then
+        return true
+    end
+    local pGui = LP:FindFirstChild("PlayerGui")
+    if not pGui then return false end
+    local scg = pGui:FindFirstChild("SkillCheckPromptGui")
+    if not scg then return false end
+    local check = scg:FindFirstChild("Check")
+    if not check then return false end
+    AutoRepair.SkillGui = check
+    AutoRepair.Line     = check:FindFirstChild("Line")
+    AutoRepair.Goal     = check:FindFirstChild("Goal")
+    return AutoRepair.Line ~= nil and AutoRepair.Goal ~= nil
+end
+
+local function hookSkillCheckEvents()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if not remotes then return end
+
+    local generator = remotes:FindFirstChild("Generator")
+    if generator then
+        local ev = generator:FindFirstChild("SkillCheckEvent")
+        if ev then
+            addARConn(ev.OnClientEvent:Connect(function()
+                AutoRepair.Fired = false
+            end))
+        end
+    end
+
+    local healing = remotes:FindFirstChild("Healing")
+    if healing then
+        local ev = healing:FindFirstChild("SkillCheckEvent")
+        if ev then
+            addARConn(ev.OnClientEvent:Connect(function()
+                AutoRepair.Fired = false
+            end))
+        end
     end
 end
 
-local function triggerSkillCheck()
-    local now = os.clock()
-    if now - lastFired < CFG.skillcheck.cooldown then return end
-    lastFired = now
-    
-    -- 🔥 ใช้ Space แทน MouseClick เพื่อไม่ให้เดินค้าง
+local function pressSpace()
+    -- VirtualInputManager triggers the game's InputBegan handler for Space
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.wait(0.02)
+    end)
+    task.wait(0.03)
+    pcall(function()
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
     end)
 end
 
-RunService.RenderStepped:Connect(function()
-    if not CFG.skillcheck.enabled then return end
-    if not skillCheck.Visible or not line.Visible then return end
-    if isInSuccessZone() and lastGoalRot ~= goal.Rotation then
-        lastGoalRot = goal.Rotation
-        triggerSkillCheck()
-    end
-end)
+local function startAutoRepair()
+    if AutoRepair.Active then return end
+    AutoRepair.Active = true
+    AutoRepair.Fired = false
 
--- ═══ 4. ESP SYSTEM (Killer & Survivor) ═════════════════════════
-local kTracked, sTracked = {}, {}
+    hookSkillCheckEvents()
 
-local function createESP(m, isK)
-    local e = {}
-    local cNear = isK and CFG.espKiller.colorNear or CFG.espSurv.colorNear
-    local hl = Instance.new("Highlight")
-    hl.Name = isK and "ESP_Killer" or "ESP_Survivor"
-    hl.Adornee = m
-    hl.FillColor = cNear
-    hl.OutlineColor = cNear
-    hl.FillTransparency = 0.55
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = m
-    e.hl = hl
-    
-    local root = getRoot(m)
-    if root then
-        local bb = Instance.new("BillboardGui")
-        bb.Size = UDim2.new(0, 160, 0, isK and 36 or 50)
-        bb.Adornee = root
-        bb.StudsOffset = Vector3.new(0, 3.2, 0)
-        bb.AlwaysOnTop = true
-        bb.MaxDistance = isK and CFG.espKiller.maxDist or CFG.espSurv.maxDist
-        bb.Parent = root
-        
-        local n = Instance.new("TextLabel")
-        n.Name = "N"
-        n.Size = UDim2.new(1, 0, 0, 18)
-        n.BackgroundTransparency = 1
-        n.Text = "?"
-        n.TextColor3 = Color3.new(1,1,1)
-        n.TextStrokeTransparency = 0
-        n.Font = Enum.Font.GothamBold
-        n.TextScaled = true
-        n.Parent = bb
-        
-        local i = Instance.new("TextLabel")
-        i.Name = "I"
-        i.Size = UDim2.new(1, 0, 0, 14)
-        i.Position = UDim2.new(0, 0, 0, 18)
-        i.BackgroundTransparency = 1
-        i.Text = ""
-        i.TextColor3 = isK and Color3.fromRGB(255,220,120) or Color3.fromRGB(200,255,200)
-        i.TextStrokeTransparency = 0
-        i.Font = Enum.Font.Gotham
-        i.TextScaled = true
-        i.Parent = bb
-        
-        if not isK then
-            local s = Instance.new("TextLabel")
-            s.Name = "S"
-            s.Size = UDim2.new(1, 0, 0, 14)
-            s.Position = UDim2.new(0, 0, 0, 32)
-            s.BackgroundTransparency = 1
-            s.Text = ""
-            s.TextColor3 = Color3.fromRGB(255, 200, 60)
-            s.TextStrokeTransparency = 0
-            s.Font = Enum.Font.GothamBold
-            s.TextScaled = true
-            s.Parent = bb
+    -- Poll every frame for maximum precision (only a few comparisons)
+    addARConn(RunService.RenderStepped:Connect(function()
+        if not AutoRepair.Active then return end
+        if not ensureSkillGui() then return end
+        if not AutoRepair.SkillGui.Visible then return end
+        if AutoRepair.Fired then return end
+
+        local diff = AutoRepair.Line.Rotation - AutoRepair.Goal.Rotation
+        if diff >= 102 and diff <= 116 then
+            AutoRepair.Fired = true
+            pressSpace()
+            notify("Auto Repair", ("Fired (diff = %.1f)"):format(diff))
         end
-        e.bb = bb
-    end
-    return e
+    end))
+
+    notify("Auto Repair", "Enabled")
 end
 
-local function removeESP(m, isK)
-    local tab = isK and kTracked or sTracked
-    local e = tab[m]
-    if not e then return end
-    if e.hl then e.hl:Destroy() end
-    if e.bb then e.bb:Destroy() end
-    tab[m] = nil
+local function stopAutoRepair()
+    AutoRepair.Active = false
+    AutoRepair.Fired = false
+    disconnectAR()
+    notify("Auto Repair", "Disabled")
 end
 
-task.spawn(function()
-    while true do
-        local myChar = player.Character
-        local myP = Players:GetPlayerFromCharacter(myChar)
-        local iAmKiller = myP and myP.Team and myP.Team.Name == "Killer"
-        
-        if CFG.espKiller.enabled then
-            local seen = {}
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and p.Character and isKiller(p.Character) then
-                    seen[p.Character] = true
-                    if not kTracked[p.Character] then kTracked[p.Character] = createESP(p.Character, true) end
-                end
-            end
-            for m in pairs(kTracked) do
-                if not seen[m] or not m:IsDescendantOf(Workspace) or not isKiller(m) then removeESP(m, true) end
-            end
-        end
-        
-        if CFG.espSurv.enabled and iAmKiller then
-            local seen = {}
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and p.Character and isSurvivor(p.Character) then
-                    seen[p.Character] = true
-                    if not sTracked[p.Character] then sTracked[p.Character] = createESP(p.Character, false) end
-                end
-            end
-            for m in pairs(sTracked) do
-                if not seen[m] or not m:IsDescendantOf(Workspace) or not isSurvivor(m) then removeESP(m, false) end
-            end
-        elseif not iAmKiller then
-            for m in pairs(sTracked) do removeESP(m, false) end
-        end
-        task.wait(0.5)
-    end
-end)
+-- ============================================================
+--  KILLER ESP
+-- ============================================================
+local KillESP = {
+    Active     = false,
+    Highlights = {},
+    Conns      = {},
+}
 
-RunService.RenderStepped:Connect(function()
-    local myChar = player.Character
-    if not myChar then return end
-    local myRoot = getRoot(myChar)
-    if not myRoot then return end
-    
-    for m, e in pairs(kTracked) do
-        if CFG.espKiller.enabled and e.bb then
-            local root = getRoot(m)
-            if root then
-                local h = m:FindFirstChildOfClass("Humanoid")
-                local d = (root.Position - myRoot.Position).Magnitude
-                local t = math.clamp(d / CFG.espKiller.maxDist, 0, 1)
-                local col = lerpColor(CFG.espKiller.colorNear, CFG.espKiller.colorFar, t)
-                e.hl.FillColor, e.hl.OutlineColor = col, col
-                
-                local n, i = e.bb:FindFirstChild("N"), e.bb:FindFirstChild("I")
-                if n then n.Text = m.Name; n.TextColor3 = col end
-                if i and h then i.Text = string.format("%dm • %dHP", math.floor(d), math.floor(h.Health)) end
-            end
-        end
-    end
-    
-    for m, e in pairs(sTracked) do
-        if CFG.espSurv.enabled and e.bb then
-            local root = getRoot(m)
-            if root then
-                local h = m:FindFirstChildOfClass("Humanoid")
-                local d = (root.Position - myRoot.Position).Magnitude
-                local t = math.clamp(d / CFG.espSurv.maxDist, 0, 1)
-                local col = lerpColor(CFG.espSurv.colorNear, CFG.espSurv.colorFar, t)
-                e.hl.FillColor, e.hl.OutlineColor = col, col
-                
-                local n, i, s = e.bb:FindFirstChild("N"), e.bb:FindFirstChild("I"), e.bb:FindFirstChild("S")
-                if n then n.Text = m.Name; n.TextColor3 = col end
-                if i and h then i.Text = string.format("%dm • %dHP", math.floor(d), math.floor(h.Health)) end
-                if s then
-                    if m:GetAttribute("IsCarried") then s.Text = "🫳 CARRIED"; s.TextColor3 = Color3.fromRGB(255,80,80)
-                    elseif m:GetAttribute("IsHooked") then s.Text = "🪝 HOOKED"; s.TextColor3 = Color3.fromRGB(255,100,200)
-                    elseif h and h.Health <= 0 then s.Text = "💀 DEAD"; s.TextColor3 = Color3.fromRGB(150,150,150)
-                    elseif h and h.Health < h.MaxHealth * 0.5 then s.Text = "🩸 INJURED"; s.TextColor3 = Color3.fromRGB(255,150,60)
-                    else s.Text = "🏃 RUNNING"; s.TextColor3 = Color3.fromRGB(150,255,150)
-                    end
-                end
-            end
-        end
-    end
-end)
+local function addESPConn(c) table.insert(KillESP.Conns, c) return c end
 
--- ═══ 5. AIMBOT ═════════════════════════════════════════════════
-local lastAimFire = 0
-
-local function getAimPos(m)
-    if CFG.aimbot.aimPart == "Head" then
-        local h = m:FindFirstChild("Head"); return h and h.Position
-    elseif CFG.aimbot.aimPart == "Torso" then
-        local t = m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso"); return t and t.Position
-    else
-        local h = m:FindFirstChild("Head") or m:FindFirstChild("HumanoidRootPart"); return h and h.Position
+local function removeESP(player)
+    local hl = KillESP.Highlights[player]
+    if hl then
+        pcall(function() hl:Destroy() end)
+        KillESP.Highlights[player] = nil
     end
 end
 
-local function isVisible(target, pos)
-    local cp = camera.CFrame.Position
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    rp.FilterDescendantsInstances = { player.Character, camera }
-    local hit = Workspace:Raycast(cp, pos - cp, rp)
-    return (not hit) or hit.Instance:IsDescendantOf(target)
-end
-
-local function findBestTarget()
-    local cp, cl = camera.CFrame.Position, camera.CFrame.LookVector
-    local maxA = math.rad(CFG.aimbot.fov / 2)
-    local best, bestPos, bestD = nil, nil, math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p == player then continue end
-        local c = p.Character
-        if not isKiller(c) then continue end
-        local ap = getAimPos(c)
-        if not ap then continue end
-        local d = ap - cp
-        local dist = d.Magnitude
-        if dist > CFG.aimbot.maxDist then continue end
-        local ang = math.acos(math.clamp(cl:Dot(d.Unit), -1, 1))
-        if ang > maxA then continue end
-        if CFG.aimbot.visibleOnly and not isVisible(c, ap) then continue end
-        if dist < bestD then best, bestPos, bestD = c, ap, dist end
-    end
-    return best, bestPos
-end
-
-local function fireGun()
+local function applyESP(player)
+    if not KillESP.Active then return end
+    if not isKillerPlayer(player) then return end
     local char = player.Character
     if not char then return end
-    local tool = char:FindFirstChildOfClass("Tool")
-    -- 🔥 ใช้ tool:Activate() แทนการคลิกหน้าจอ เพื่อไม่ให้เดินค้าง
-    if tool then
-        pcall(function() tool:Activate() end)
-    end
+
+    removeESP(player)
+
+    local hl = Instance.new("Highlight")
+    hl.Name               = "MG_KillerESP"
+    hl.Adornee            = char
+    hl.FillColor          = Color3.fromRGB(255, 0, 0)
+    hl.OutlineColor       = Color3.fromRGB(255, 255, 255)
+    hl.FillTransparency   = 0.4
+    hl.OutlineTransparency= 0
+    hl.DepthMode          = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent             = char
+
+    KillESP.Highlights[player] = hl
 end
 
-RunService.RenderStepped:Connect(function(dt)
-    if not CFG.aimbot.enabled then return end
-
-    if CFG.aimbot.mode == "trigger" then
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Exclude
-        rp.FilterDescendantsInstances = { player.Character, camera }
-        local hit = Workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * CFG.aimbot.maxDist, rp)
-        if hit then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and p.Character and isKiller(p.Character) and hit.Instance:IsDescendantOf(p.Character) then
-                    if CFG.aimbot.autoFire then
-                        local now = os.clock()
-                        if now - lastAimFire > CFG.aimbot.fireCooldown then lastAimFire = now; fireGun() end
-                    end
-                    break
+local function refreshESP()
+    for player in pairs(KillESP.Highlights) do
+        if not player.Parent or not isKillerPlayer(player) then
+            removeESP(player)
+        end
+    end
+    if KillESP.Active then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if isKillerPlayer(p) and p.Character then
+                if not KillESP.Highlights[p] then
+                    applyESP(p)
                 end
             end
         end
+    end
+end
+
+local function startESP()
+    if KillESP.Active then return end
+    KillESP.Active = true
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        applyESP(p)
+        addESPConn(p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            applyESP(p)
+        end))
+    end
+
+    addESPConn(Players.PlayerAdded:Connect(function(p)
+        addESPConn(p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            applyESP(p)
+        end))
+    end))
+
+    addESPConn(Players.PlayerRemoving:Connect(removeESP))
+
+    -- Refresh loop for team changes (very cheap)
+    task.spawn(function()
+        while KillESP.Active do
+            task.wait(1.5)
+            if KillESP.Active then refreshESP() end
+        end
+    end)
+
+    notify("Killer ESP", "Enabled")
+end
+
+local function stopESP()
+    KillESP.Active = false
+    for _, c in ipairs(KillESP.Conns) do
+        pcall(function() c:Disconnect() end)
+    end
+    table.clear(KillESP.Conns)
+    for p in pairs(KillESP.Highlights) do
+        removeESP(p)
+    end
+    notify("Killer ESP", "Disabled")
+end
+
+-- ============================================================
+--  AIM ASSIST (Killer only)
+--  Uses BindToRenderStep AFTER camera update so our CFrame
+--  setter wins against the game's own camera module.
+-- ============================================================
+local Aim = {
+    Active = false,
+    Target = nil,
+}
+
+local function findAimTarget()
+    local camPos  = Camera.CFrame.Position
+    local camLook = Camera.CFrame.LookVector
+    local best    = nil
+    local bestDist= math.huge
+    local cosFov  = math.cos(math.rad(State.AimFOV))
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LP then continue end
+        if not isKillerPlayer(player) then continue end
+        local char = player.Character
+        if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local part = getTargetPart(char)
+        if not part then continue end
+
+        local delta = part.Position - camPos
+        local dist  = delta.Magnitude
+        if dist < 0.01 then continue end
+        local dir = delta / dist
+        if camLook:Dot(dir) < cosFov then continue end
+
+        if dist < bestDist then
+            bestDist = dist
+            best     = part
+        end
+    end
+    return best
+end
+
+local function aimRenderStep()
+    if not Aim.Active then return end
+
+    if State.AimRequireGun and not findGunTool() then
+        Aim.Target = nil
         return
     end
 
-    local holding = CFG.aimbot.holding or UserInputService:IsKeyDown(Enum.KeyCode.C)
-    if not holding then return end
-
-    local t, pos = findBestTarget()
-    if not t then return end
-    local cp = camera.CFrame.Position
-    local desired = CFrame.new(cp, pos)
-    
-    if CFG.aimbot.mode == "rage" then
-        camera.CFrame = desired
-    else
-        camera.CFrame = camera.CFrame:Lerp(desired, math.clamp(dt * 20, 0, 1))
+    local target = findAimTarget()
+    if not target then
+        Aim.Target = nil
+        return
     end
-    
-    if CFG.aimbot.autoFire then
-        local look = camera.CFrame.LookVector
-        local dir = (pos - cp).Unit
-        if look:Dot(dir) > CFG.aimbot.aimThreshold then
-            local now = os.clock()
-            if now - lastAimFire > CFG.aimbot.fireCooldown then lastAimFire = now; fireGun() end
-        end
-    end
-end)
+    Aim.Target = target
 
--- ═══ 6. PC KEYBOARD SHORTCUTS ══════════════════════════════════
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        CFG.aimbot.enabled = not CFG.aimbot.enabled
-        print("[Aim] " .. (CFG.aimbot.enabled and "ON" or "OFF"))
-    elseif input.KeyCode == Enum.KeyCode.RightControl then
-        CFG.espKiller.enabled = not CFG.espKiller.enabled
-        if not CFG.espKiller.enabled then for m in pairs(kTracked) do removeESP(m, true) end end
-        print("[ESP Killer] " .. (CFG.espKiller.enabled and "ON" or "OFF"))
-    elseif input.KeyCode == Enum.KeyCode.RightAlt then
-        CFG.espSurv.enabled = not CFG.espSurv.enabled
-        if not CFG.espSurv.enabled then for m in pairs(sTracked) do removeESP(m, false) end end
-        print("[ESP Surv] " .. (CFG.espSurv.enabled and "ON" or "OFF"))
-    end
-end)
+    local camPos    = Camera.CFrame.Position
+    local targetPos = target.Position
+    local goal      = CFrame.lookAt(camPos, targetPos)
+    Camera.CFrame   = Camera.CFrame:Lerp(goal, State.AimSmoothness)
+end
 
-print("[AutoHelper] 🚀 Bug Fixed: Movement & Repairing should work normally.")
+local AIM_BIND = "MG_AimAssist"
+local aimBound = false
+
+local function startAim()
+    if Aim.Active then return end
+    Aim.Active = true
+    if not aimBound then
+        aimBound = true
+        pcall(function() RunService:UnbindFromRenderStep(AIM_BIND) end)
+        RunService:BindToRenderStep(
+            AIM_BIND,
+            Enum.RenderPriority.Camera.Value + 1,   -- runs AFTER camera module
+            aimRenderStep
+        )
+    end
+    notify("Aim Assist", "Enabled")
+end
+
+local function stopAim()
+    Aim.Active = false
+    Aim.Target = nil
+    if aimBound then
+        aimBound = false
+        pcall(function() RunService:UnbindFromRenderStep(AIM_BIND) end)
+    end
+    notify("Aim Assist", "Disabled")
+end
+
+-- ============================================================
+--  RAYFIELD UI
+-- ============================================================
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+local Window = Rayfield:CreateWindow({
+    Name           = "Murder Game Helper",
+    LoadingTitle   = "Loading Murder Game Helper",
+    LoadingSubtitle= "v2",
+    Theme          = "Dark",
+    ToggleUIKeybind= "K",
+    ConfigurationSaving = {Enabled = false},
+    KeySystem      = false,
+})
+
+local Tab = Window:CreateTab("Main", 0)
+
+-- --- Auto Repair ---
+Tab:CreateSection("Auto Repair")
+
+Tab:CreateToggle({
+    Name         = "Auto Repair",
+    CurrentValue = false,
+    Flag         = "MGAutoRepair",
+    Callback = function(v)
+        if v then startAutoRepair() else stopAutoRepair() end
+    end,
+})
+
+Tab:CreateLabel("Success window: 102° – 116° (game-accurate)")
+
+-- --- Killer ESP ---
+Tab:CreateSection("Killer ESP")
+
+Tab:CreateToggle({
+    Name         = "Killer ESP",
+    CurrentValue = false,
+    Flag         = "MGKillerESP",
+    Callback = function(v)
+        if v then startESP() else stopESP() end
+    end,
+})
+
+Tab:CreateButton({
+    Name     = "Refresh ESP Now",
+    Callback = function() refreshESP() end,
+})
+
+-- --- Aim Assist ---
+Tab:CreateSection("Aim Assist (Killer Only)")
+
+Tab:CreateToggle({
+    Name         = "Aim Assist",
+    CurrentValue = false,
+    Flag         = "MGAimToggle",
+    Callback = function(v)
+        if v then startAim() else stopAim() end
+    end,
+})
+
+Tab:CreateSlider({
+    Name         = "Smoothness",
+    Range        = {1, 100},
+    Increment    = 1,
+    Suffix       = "%",
+    CurrentValue = 15,
+    Flag         = "MGAimSmooth",
+    Callback = function(v) State.AimSmoothness = v / 100 end,
+})
+
+Tab:CreateSlider({
+    Name         = "FOV",
+    Range        = {10, 360},
+    Increment    = 5,
+    Suffix       = "°",
+    CurrentValue = 90,
+    Flag         = "MGAimFOV",
+    Callback = function(v) State.AimFOV = v end,
+})
+
+Tab:CreateToggle({
+    Name         = "Require Gun Equipped",
+    CurrentValue = true,
+    Flag         = "MGAimRequireGun",
+    Callback = function(v) State.AimRequireGun = v end,
+})
+
+print("[MG] Murder Game Helper v2 loaded.")
